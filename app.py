@@ -85,6 +85,16 @@ HTML_PAGE = """
   <body>
     <h1>Remote LTE AT Chat</h1>
     <p>Inserisci i dettagli di connessione SSH per il modem MikroTik e prova a stabilire la sessione.</p>
+    <div class="panel" style="margin-bottom: 1rem;">
+      <h2>Come testare</h2>
+      <ol>
+        <li>Avvia il server Flask (di default sulla porta 5000) e apri la pagina nel browser.</li>
+        <li>Compila i campi Host, Username, Password, Porta e Interfaccia LTE.</li>
+        <li>Clicca su <strong>Prova connessione</strong>.</li>
+        <li>Se la connessione va a buon fine, comparirà il riquadro "Terminale AT" con il risultato del comando iniziale.</li>
+        <li>Digita i comandi AT nel campo dedicato e premi <strong>Invia</strong>; usa <strong>Disconnetti</strong> per chiudere la sessione.</li>
+      </ol>
+    </div>
     <form id="connection-form">
       <label>Indirizzo IP / Host
         <input name="host" required placeholder="192.168.88.1" />

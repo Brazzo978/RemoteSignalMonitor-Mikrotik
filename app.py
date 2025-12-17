@@ -3,7 +3,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import re
 
@@ -101,6 +101,11 @@ HTML_PAGE = """<!doctype html>
       .tab-pane.active { display: block; }
       .nav-tabs .nav-link { border: none; }
       .nav-tabs .nav-link.active { border-bottom: 2px solid #0d6efd; font-weight: 600; }
+      .progress { background-color: #ecf1f8; height: 14px; overflow: visible; }
+      .progress-bar { transition: width 0.4s ease; font-size: 11px; }
+      .signal-meter { background: #fff; border: 1px solid #e9edf3; border-radius: 10px; padding: 0.75rem; box-shadow: inset 0 1px 0 rgba(255,255,255,0.6); }
+      .signal-meter + .signal-meter { margin-top: 0.6rem; }
+      .badge-soft { background: #f3f6fb; color: #3b4863; border-radius: 12px; padding: 0.15rem 0.5rem; }
     </style>
   </head>
   <body class="pb-5">
@@ -217,6 +222,50 @@ HTML_PAGE = """<!doctype html>
               </div>
             </div>
 
+            <div class="row mt-3">
+              <div class="col-lg-7">
+                <div class="signal-meter">
+                  <div class="d-flex justify-content-between small mb-1"><span class="fw-semibold">RSRP</span><span id="rsrp-value">-</span></div>
+                  <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar" id="rsrp-bar" style="width: 0%"></div>
+                  </div>
+                </div>
+                <div class="signal-meter">
+                  <div class="d-flex justify-content-between small mb-1"><span class="fw-semibold">RSRQ</span><span id="rsrq-value">-</span></div>
+                  <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar" id="rsrq-bar" style="width: 0%"></div>
+                  </div>
+                </div>
+                <div class="signal-meter">
+                  <div class="d-flex justify-content-between small mb-1"><span class="fw-semibold">SNR</span><span id="snr-value">-</span></div>
+                  <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar" id="snr-bar" style="width: 0%"></div>
+                  </div>
+                </div>
+                <div class="signal-meter">
+                  <div class="d-flex justify-content-between small mb-1"><span class="fw-semibold">RSSI</span><span id="rssi-value">-</span></div>
+                  <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar" id="rssi-bar" style="width: 0%"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-lg-5">
+                <div class="card border-0 bg-white shadow-sm h-100">
+                  <div class="card-header bg-white border-0 pb-0 d-flex justify-content-between align-items-center">
+                    <div>
+                      <div class="fw-semibold">Segnali avanzati</div>
+                      <small class="text-muted">Dettagli per banda e tecnologia</small>
+                    </div>
+                    <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#advanced-collapse" aria-expanded="false">Mostra</button>
+                  </div>
+                  <div class="card-body collapse" id="advanced-collapse">
+                    <div id="advanced-placeholder" class="text-muted small">Nessun dettaglio disponibile.</div>
+                    <div id="advanced-container" class="d-flex flex-column gap-3"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="row g-3 mt-1">
               <div class="col-12">
                 <div class="card border-0 bg-dim">
@@ -280,6 +329,8 @@ HTML_PAGE = """<!doctype html>
       const autoRefresh = document.getElementById('auto-refresh');
       const rawDebug = document.getElementById('raw-debug');
       const mainTabs = document.getElementById('main-tabs');
+      const advancedContainer = document.getElementById('advanced-container');
+      const advancedPlaceholder = document.getElementById('advanced-placeholder');
       let sessionToken = null;
       let autoTimer = null;
 
@@ -292,6 +343,56 @@ HTML_PAGE = """<!doctype html>
         const pane = document.querySelector(`.tab-pane[data-tab="${target}"]`);
         if (pane) pane.classList.add('active');
       });
+
+      const percentageCalculators = {
+        rsrp(value) {
+          if (isNaN(value) || value < -140) return 0;
+          let pct = ((value - -135) / (-65 + 135)) * 100;
+          if (pct > 100) pct = 100;
+          if (pct < 15) pct = 15;
+          return Math.round(pct);
+        },
+        rsrq(value) {
+          if (isNaN(value) || value < -20) return 0;
+          let pct = ((value - -20) / (-8 + 20)) * 100;
+          if (pct > 100) pct = 100;
+          if (pct < 15) pct = 15;
+          return Math.round(pct);
+        },
+        snr(value) {
+          if (isNaN(value) || value < -10) return 0;
+          let pct = ((value - -10) / (35 + 10)) * 100;
+          if (pct > 100) pct = 100;
+          if (pct < 15) pct = 15;
+          return Math.round(pct);
+        },
+        rssi(value) {
+          if (isNaN(value)) return 0;
+          const min = -110;
+          const max = -30;
+          if (value <= min) return 0;
+          let pct = ((value - min) / (max - min)) * 100;
+          if (pct > 100) pct = 100;
+          if (pct < 15) pct = 15;
+          return Math.round(pct);
+        },
+      };
+
+      function getProgressClass(percentage) {
+        if (percentage >= 60) return 'bg-success';
+        if (percentage >= 40) return 'bg-warning';
+        return 'bg-danger';
+      }
+
+      function updateMeter(idBase, value, percentage) {
+        const valueEl = document.getElementById(`${idBase}-value`);
+        const barEl = document.getElementById(`${idBase}-bar`);
+        if (!valueEl || !barEl) return;
+        valueEl.textContent = value || '-';
+        barEl.style.width = `${percentage}%`;
+        barEl.setAttribute('aria-valuenow', percentage.toString());
+        barEl.className = `progress-bar ${getProgressClass(percentage)}`;
+      }
 
       function log(message) {
         console.log(message);
@@ -489,6 +590,89 @@ HTML_PAGE = """<!doctype html>
         const ratPill = document.getElementById('rat-pill');
         ratPill.textContent = parsed.rat || '-';
         ratPill.className = 'status-pill text-bg-' + (parsed.rat === 'NR5G_SA' || parsed.rat === 'LTE+NR' ? 'success' : 'light');
+
+        const rsrpVal = parseFloat(parsed.rsrp_value);
+        const rsrqVal = parseFloat(parsed.rsrq_value);
+        const snrVal = parseFloat(parsed.snr_value);
+        const rssiVal = parseFloat(parsed.rssi_value);
+        updateMeter('rsrp', parsed.rsrp || '-', percentageCalculators.rsrp(rsrpVal));
+        updateMeter('rsrq', parsed.rsrq || '-', percentageCalculators.rsrq(rsrqVal));
+        updateMeter('snr', parsed.snr || '-', percentageCalculators.snr(snrVal));
+        updateMeter('rssi', parsed.rssi || '-', percentageCalculators.rssi(rssiVal));
+
+        renderAdvanced(parsed.advanced || []);
+      }
+
+      function renderAdvanced(details) {
+        advancedContainer.innerHTML = '';
+        if (!details || !details.length) {
+          advancedPlaceholder.classList.remove('d-none');
+          return;
+        }
+        advancedPlaceholder.classList.add('d-none');
+
+        details.forEach(detail => {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'border rounded p-2';
+
+          const header = document.createElement('div');
+          header.className = 'd-flex justify-content-between flex-wrap gap-2';
+          header.innerHTML = `<div><div class="fw-semibold">${detail.title || 'Banda'}</div><div class="text-muted small">${detail.technology || ''}${detail.band_display ? ' · ' + detail.band_display : ''}</div></div><div class="text-muted small text-end">PCI: ${detail.pci || '-'}<br/>Canale: ${detail.channel || '-'}</div>`;
+          wrapper.appendChild(header);
+
+          if (detail.bandwidth || detail.rx_diversity) {
+            const meta = document.createElement('div');
+            meta.className = 'd-flex justify-content-between text-muted small mt-1';
+            meta.innerHTML = `<span>Larghezza banda: ${detail.bandwidth || '-'}</span><span>${detail.rx_diversity ? 'RX Diversity: ' + detail.rx_diversity : ''}</span>`;
+            wrapper.appendChild(meta);
+          }
+
+          (detail.metrics || []).forEach(metric => {
+            const pct = percentageCalculators[metric.key] ? percentageCalculators[metric.key](parseFloat(metric.value)) : 0;
+            const block = document.createElement('div');
+            block.className = 'mt-2';
+            block.innerHTML = `<div class="d-flex justify-content-between small"><span class="fw-semibold">${metric.label}</span><span>${metric.display || 'N/A'}</span></div>`;
+            const progress = document.createElement('div');
+            progress.className = 'progress';
+            progress.setAttribute('role', 'progressbar');
+            progress.setAttribute('aria-valuemin', '0');
+            progress.setAttribute('aria-valuemax', '100');
+
+            if (pct > 0) {
+              const bar = document.createElement('div');
+              bar.className = `progress-bar ${getProgressClass(pct)}`;
+              bar.style.width = `${pct}%`;
+              bar.textContent = `${metric.display} / ${pct}%`;
+              progress.appendChild(bar);
+              block.appendChild(progress);
+            } else {
+              const muted = document.createElement('div');
+              muted.className = 'text-muted fst-italic small';
+              muted.textContent = 'Valore non disponibile';
+              block.appendChild(muted);
+            }
+            wrapper.appendChild(block);
+          });
+
+          (detail.antennas || []).forEach(ant => {
+            const pct = percentageCalculators.rsrp(parseFloat(ant.value));
+            const block = document.createElement('div');
+            block.className = 'mt-2';
+            block.innerHTML = `<div class="d-flex justify-content-between small"><span>${ant.label || 'Antenna'}</span><span>${ant.display || 'N/A'}</span></div>`;
+            if (pct > 0) {
+              const progress = document.createElement('div');
+              progress.className = 'progress';
+              const bar = document.createElement('div');
+              bar.className = `progress-bar ${getProgressClass(pct)}`;
+              bar.style.width = `${pct}%`;
+              progress.appendChild(bar);
+              block.appendChild(progress);
+            }
+            wrapper.appendChild(block);
+          });
+
+          advancedContainer.appendChild(wrapper);
+        });
       }
     </script>
   </body>
@@ -555,7 +739,7 @@ def _parse_temp_output(text: str) -> str:
     return f"Media {average:.1f}°C" + (f" ({detail_text})" if detail_text else "")
 
 
-def _parse_debug_output(text: str) -> Dict[str, str]:
+def _parse_debug_output(text: str) -> Dict[str, Any]:
     info: Dict[str, str] = {
         "rat": "-",
         "mccmnc": "-",
@@ -568,52 +752,304 @@ def _parse_debug_output(text: str) -> Dict[str, str]:
         "rsrq": "-",
         "snr": "-",
         "rssi": "-",
+        "rsrp_value": None,
+        "rsrq_value": None,
+        "snr_value": None,
+        "rssi_value": None,
+        "advanced": [],
     }
 
-    rat = re.search(r"RAT:([^\r\n]+)", text)
-    if rat:
-        info["rat"] = rat.group(1).strip()
+    def _to_float(value: str) -> Optional[float]:
+        try:
+            return float(value)
+        except Exception:
+            return None
 
-    mcc = re.search(r"mcc:(\d+)", text)
-    mnc = re.search(r"mnc:(\d+)", text)
-    if mcc and mnc:
-        info["mccmnc"] = f"{mcc.group(1)}/{mnc.group(1)}"
+    def _round_value(value: Optional[float]) -> Optional[float]:
+        if value is None or value != value:
+            return None
+        return round(value, 1)
 
-    bands = re.findall(r"(?:lte_band|nr_band):([\w/+-]+)", text)
-    if bands:
-        info["bands"] = ", ".join(dict.fromkeys(bands))
+    def _parse_antennas(line: str, prefix: str = "Antenna"):
+        match = re.search(r"\(([^)]+)\)", line)
+        if not match:
+            return []
+        antennas = []
+        for idx, item in enumerate(match.group(1).split(",")):
+            try:
+                value = float(item.strip())
+            except Exception:
+                value = None
+            antennas.append(
+                {
+                    "label": f"{prefix} {idx + 1}",
+                    "value": value,
+                    "display": f"{value} dBm" if value is not None else "N/A",
+                }
+            )
+        return antennas
 
-    channel = re.search(r"channel:(\d+)", text)
-    if channel:
-        info["channel"] = channel.group(1)
+    def _finalize_entry(entry: Optional[Dict], advanced: list) -> None:
+        if not entry:
+            return
 
-    pci = re.search(r"pci:(\d+)", text)
-    if pci:
-        info["pci"] = pci.group(1)
+        band_display = (
+            f"Band {entry['band']}" if entry.get("technology") == "LTE" and entry.get("band") else entry.get("band") or "N/A"
+        )
+        title = "Primary 4G" if entry.get("technology") == "LTE" else "Primary 5G"
+        if entry.get("technology") == "LTE" and entry.get("role") == "secondary":
+            title = f"CA 4G #{entry.get('ca_index', '')}".strip()
+        if band_display != "N/A":
+            title = f"{title} ({band_display})"
 
-    cell = re.search(r"(lte_cell_id|nr_cell_id):(\d+)", text)
-    if cell:
-        info["cell_id"] = cell.group(2)
+        detail = {
+            "title": title,
+            "technology": entry.get("technology"),
+            "band_display": band_display,
+            "bandwidth": entry.get("bandwidth") or "-",
+            "channel": entry.get("channel") or "-",
+            "pci": entry.get("pci") or "-",
+            "rx_diversity": entry.get("rx_diversity") or "",
+            "metrics": [],
+            "antennas": entry.get("antennas") or [],
+        }
 
-    tac = re.search(r"(lte_tac|nr_tac):(\d+)", text)
-    if tac:
-        info["tac"] = tac.group(2)
+        def add_metric(key: str, label: str, value: Optional[float], unit: str) -> None:
+            normalized = _round_value(value)
+            detail["metrics"].append(
+                {
+                    "key": key,
+                    "label": label,
+                    "value": normalized,
+                    "display": f"{normalized} {unit}" if normalized is not None else "N/A",
+                }
+            )
 
-    rsrp = re.search(r"(?:lte_rsrp|nr_rsrp):\s*([-\d.]+dBm)", text)
-    if rsrp:
-        info["rsrp"] = rsrp.group(1)
+        add_metric("rsrq", "RSRQ" if entry.get("technology") == "LTE" else "SS_RSRQ", entry.get("rsrq"), "dB")
+        add_metric("rsrp", "RSRP" if entry.get("technology") == "LTE" else "SS_RSRP", entry.get("rsrp"), "dBm")
+        add_metric("rssi", "RSSI", entry.get("rssi"), "dBm")
+        add_metric("snr", "SINR" if entry.get("technology") == "LTE" else "SS_SINR", entry.get("snr"), "dB")
+        advanced.append(detail)
 
-    rsrq = re.search(r"(?:rsrq|nr_rsrq):\s*([-\d.]+dB)", text)
-    if rsrq:
-        info["rsrq"] = rsrq.group(1)
+    current_entry = None
+    scell_counter = 0
+    advanced_entries = []
+    pending_lte_antennas = []
+    pending_lte_diversity: Optional[str] = None
 
-    snr = re.search(r"(?:lte_snr|nr_snr):\s*([-\d.]+dB)", text)
-    if snr:
-        info["snr"] = snr.group(1)
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
 
-    rssi = re.search(r"lte_rssi:([-\d.]+dBm)", text)
-    if rssi:
-        info["rssi"] = rssi.group(1)
+        if line.lower().startswith("rat:"):
+            info["rat"] = line.split(":", 1)[1].strip()
+            continue
+
+        if "mcc:" in line and "mnc:" in line:
+            mcc = re.search(r"mcc:(\d+)", line)
+            mnc = re.search(r"mnc:(\d+)", line)
+            if mcc and mnc:
+                info["mccmnc"] = f"{mcc.group(1)}/{mnc.group(1)}"
+            continue
+
+        if line.startswith("lte_ant_rsrp"):
+            pending_lte_antennas = _parse_antennas(line)
+            diversity = re.search(r"rx_diversity:([0-9]+)", line, re.IGNORECASE)
+            if diversity:
+                pending_lte_diversity = diversity.group(1)
+            continue
+
+        if line.startswith("pcell:"):
+            _finalize_entry(current_entry, advanced_entries)
+            current_entry = {
+                "technology": "LTE",
+                "role": "primary",
+                "band": None,
+                "bandwidth": None,
+                "channel": None,
+                "pci": None,
+                "rsrp": None,
+                "rsrq": None,
+                "rssi": None,
+                "snr": None,
+                "antennas": pending_lte_antennas,
+                "rx_diversity": pending_lte_diversity,
+            }
+            pending_lte_antennas = []
+            pending_lte_diversity = None
+            band_match = re.search(r"lte_band:(\d+)", line, re.IGNORECASE)
+            bw_match = re.search(r"lte_band_width:([^\s]+)", line, re.IGNORECASE)
+            if band_match:
+                current_entry["band"] = band_match.group(1)
+            if bw_match:
+                current_entry["bandwidth"] = bw_match.group(1)
+            continue
+
+        if line.startswith("scell:"):
+            _finalize_entry(current_entry, advanced_entries)
+            scell_counter += 1
+            current_entry = {
+                "technology": "LTE",
+                "role": "secondary",
+                "ca_index": scell_counter,
+                "band": None,
+                "bandwidth": None,
+                "channel": None,
+                "pci": None,
+                "rsrp": None,
+                "rsrq": None,
+                "rssi": None,
+                "snr": None,
+                "antennas": [],
+                "rx_diversity": None,
+            }
+            band_match = re.search(r"lte_band:(\d+)", line, re.IGNORECASE)
+            bw_match = re.search(r"lte_band_width:([^\s]+)", line, re.IGNORECASE)
+            if band_match:
+                current_entry["band"] = band_match.group(1)
+            if bw_match:
+                current_entry["bandwidth"] = bw_match.group(1)
+            continue
+
+        if line.startswith("nr_band:"):
+            _finalize_entry(current_entry, advanced_entries)
+            current_entry = {
+                "technology": "NR",
+                "role": "primary",
+                "band": None,
+                "bandwidth": None,
+                "channel": None,
+                "pci": None,
+                "rsrp": None,
+                "rsrq": None,
+                "rssi": None,
+                "snr": None,
+                "antennas": [],
+                "rx_diversity": None,
+            }
+            band_match = re.search(r"nr_band:([^\s]+)", line, re.IGNORECASE)
+            if band_match:
+                current_entry["band"] = band_match.group(1)
+            continue
+
+        if current_entry:
+            if line.startswith("channel:") and current_entry.get("technology") == "LTE":
+                channel_match = re.search(r"channel:(\d+)", line, re.IGNORECASE)
+                pci_match = re.search(r"pci:(\d+)", line, re.IGNORECASE)
+                if channel_match:
+                    current_entry["channel"] = channel_match.group(1)
+                if pci_match:
+                    current_entry["pci"] = pci_match.group(1)
+                continue
+
+            if line.startswith("nr_channel:") and current_entry.get("technology") == "NR":
+                parts = line.split(":", 1)
+                if len(parts) > 1:
+                    current_entry["channel"] = parts[1].strip()
+                continue
+
+            if line.startswith("nr_pci:") and current_entry.get("technology") == "NR":
+                parts = line.split(":", 1)
+                if len(parts) > 1:
+                    current_entry["pci"] = parts[1].strip()
+                continue
+
+            if line.startswith("nr_band_width:") and current_entry.get("technology") == "NR":
+                parts = line.split(":", 1)
+                if len(parts) > 1:
+                    current_entry["bandwidth"] = parts[1].strip()
+                continue
+
+            if line.startswith("lte_rsrp:") and current_entry.get("technology") == "LTE":
+                rsrp_match = re.search(r"lte_rsrp:([-\d.]+)", line, re.IGNORECASE)
+                rsrq_match = re.search(r"rsrq:([-\d.]+)", line, re.IGNORECASE)
+                if rsrp_match:
+                    current_entry["rsrp"] = _to_float(rsrp_match.group(1))
+                if rsrq_match:
+                    current_entry["rsrq"] = _to_float(rsrq_match.group(1))
+                continue
+
+            if line.startswith("lte_rssi:") and current_entry.get("technology") == "LTE":
+                rssi_match = re.search(r"lte_rssi:([-\d.]+)", line, re.IGNORECASE)
+                snr_match = re.search(r"lte_snr:([-\d.]+)", line, re.IGNORECASE)
+                if rssi_match:
+                    current_entry["rssi"] = _to_float(rssi_match.group(1))
+                if snr_match:
+                    current_entry["snr"] = _to_float(snr_match.group(1))
+                continue
+
+            if line.startswith("nr_rsrp:") and current_entry.get("technology") == "NR":
+                rsrp_match = re.search(r"nr_rsrp:([-\d.]+)", line, re.IGNORECASE)
+                diversity = re.search(r"rx_diversity:([\d]+)", line, re.IGNORECASE)
+                if rsrp_match:
+                    current_entry["rsrp"] = _to_float(rsrp_match.group(1))
+                if diversity:
+                    current_entry["rx_diversity"] = diversity.group(1)
+                antennas = _parse_antennas(line)
+                if antennas:
+                    current_entry["antennas"] = antennas
+                continue
+
+            if line.startswith("nr_rsrq:") and current_entry.get("technology") == "NR":
+                rsrq_match = re.search(r"nr_rsrq:([-\d.]+)", line, re.IGNORECASE)
+                if rsrq_match:
+                    current_entry["rsrq"] = _to_float(rsrq_match.group(1))
+                continue
+
+            if line.startswith("nr_rssi:") and current_entry.get("technology") == "NR":
+                rssi_match = re.search(r"nr_rssi:([-\d.]+)", line, re.IGNORECASE)
+                if rssi_match:
+                    current_entry["rssi"] = _to_float(rssi_match.group(1))
+                continue
+
+            if line.startswith("nr_snr:") and current_entry.get("technology") == "NR":
+                snr_match = re.search(r"nr_snr:([-\d.]+)", line, re.IGNORECASE)
+                if snr_match:
+                    current_entry["snr"] = _to_float(snr_match.group(1))
+                continue
+
+        cell = re.search(r"(lte_cell_id|nr_cell_id):(\d+)", line, re.IGNORECASE)
+        if cell:
+            info["cell_id"] = cell.group(2)
+        tac = re.search(r"(lte_tac|nr_tac):(\d+)", line, re.IGNORECASE)
+        if tac:
+            info["tac"] = tac.group(2)
+        channel_match = re.search(r"channel:(\d+)", line, re.IGNORECASE)
+        if channel_match and info.get("channel") == "-":
+            info["channel"] = channel_match.group(1)
+        pci_match = re.search(r"pci:(\d+)", line, re.IGNORECASE)
+        if pci_match and info.get("pci") == "-":
+            info["pci"] = pci_match.group(1)
+        band_match = re.search(r"(?:lte_band|nr_band):([\w/+-]+)", line, re.IGNORECASE)
+        if band_match:
+            existing = info["bands"].split(", ") if info["bands"] != "-" else []
+            if band_match.group(1) not in existing:
+                existing.append(band_match.group(1))
+            info["bands"] = ", ".join(existing)
+
+        rsrp_match = re.search(r"(?:lte_rsrp|nr_rsrp):\s*([-\d.]+)", line, re.IGNORECASE)
+        if rsrp_match and info.get("rsrp") == "-":
+            info["rsrp_value"] = _to_float(rsrp_match.group(1))
+            info["rsrp"] = f"{info['rsrp_value']}dBm" if info["rsrp_value"] is not None else "-"
+
+        rsrq_match = re.search(r"(?:rsrq|nr_rsrq):\s*([-\d.]+)", line, re.IGNORECASE)
+        if rsrq_match and info.get("rsrq") == "-":
+            info["rsrq_value"] = _to_float(rsrq_match.group(1))
+            info["rsrq"] = f"{info['rsrq_value']}dB" if info["rsrq_value"] is not None else "-"
+
+        snr_match = re.search(r"(?:lte_snr|nr_snr):\s*([-\d.]+)", line, re.IGNORECASE)
+        if snr_match and info.get("snr") == "-":
+            info["snr_value"] = _to_float(snr_match.group(1))
+            info["snr"] = f"{info['snr_value']}dB" if info["snr_value"] is not None else "-"
+
+        rssi_match = re.search(r"lte_rssi:([-\d.]+)", line, re.IGNORECASE)
+        if rssi_match and info.get("rssi") == "-":
+            info["rssi_value"] = _to_float(rssi_match.group(1))
+            info["rssi"] = f"{info['rssi_value']}dBm" if info["rssi_value"] is not None else "-"
+
+    _finalize_entry(current_entry, advanced_entries)
+    info["advanced"] = advanced_entries
 
     return info
 

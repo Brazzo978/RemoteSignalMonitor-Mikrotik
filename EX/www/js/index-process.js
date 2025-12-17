@@ -1,0 +1,1684 @@
+function processAllInfos() {
+const italianNetworkProviders = {
+  "22201": "TIM",
+  "22202": "Elsacom",
+  "22204": "Intermatica",
+  "22205": "Telespazio",
+  "22206": "Vodafone Italia",
+  "22207": "Kena Mobile",
+  "22208": "Fastweb",
+  "22210": "Vodafone Italia",
+  "22230": "RFI",
+  "22233": "PosteMobile",
+  "22234": "BT Italia",
+  "22235": "Lycamobile",
+  "22236": "Digi Mobil",
+  "22237": "Wind Tre",
+  "22238": "Linkem",
+  "22239": "SMS Italia",
+  "22241": "GO Internet",
+  "22243": "TIM",
+  "22247": "Fastweb",
+  "22248": "TIM",
+  "22249": "Vianova",
+  "22250": "Iliad",
+  "22253": "CoopVoce",
+  "22254": "Plintron",
+  "22256": "spusu",
+  "22277": "IPSE 2000",
+  "22288": "Wind Tre",
+  "22298": "Blu",
+  "22299": "Wind Tre",
+};
+
+const defaultDataState = {
+  atcmd: "",
+  internetConnectionStatus: "Disconnected",
+  temperature: "0",
+  simStatus: "No SIM",
+  activeSim: "No SIM",
+  networkProvider: "N/A",
+  mccmnc: "00000",
+  apn: "Unknown",
+  networkMode: "Disconnected",
+  bands: "Unknown Bands",
+  bandwidth: "Unknown Bandwidth",
+  earfcns: "000",
+  pccPCI: "0",
+  sccPCI: "-",
+  ipv4: "000.000.000.000",
+  ipv6: "0000:0000:0000:0000:0000:0000:0000:0000",
+  cellID: "Unknown",
+  eNBID: "Unknown",
+  tac: "Unknown",
+  csq: "-",
+  rssiLTE: "-",
+  rssiNR: "-",
+  rssiLTEPercentage: "0%",
+  rssiNRPercentage: "0%",
+  rsrpLTE: "-",
+  rsrpNR: "-",
+  rsrpLTEPercentage: "0%",
+  rsrpNRPercentage: "0%",
+  rsrqLTE: "-",
+  rsrqNR: "-",
+  rsrqLTEPercentage: "0%",
+  rsrqNRPercentage: "0%",
+  sinrLTE: "-",
+  sinrNR: "-",
+  sinrLTEPercentage: "0%",
+  sinrNRPercentage: "0%",
+  signalPercentage: "0",
+  signalAssessment: "Unknown",
+  uptime: "Unknown",
+  lastUpdate: new Date().toLocaleString(),
+  newRefreshRate: null,
+  refreshRate: 3,
+  nrDownload: "0",
+  nrUpload: "0",
+  nonNrDownload: "0",
+  nonNrUpload: "0",
+  downloadStat: "0",
+  uploadStat: "0",
+  detailedSignals: [],
+  intervalId: null,
+};
+
+return {
+  ...defaultDataState,
+
+  resetData(overrides = {}) {
+    const preservedState = {
+      refreshRate: this.refreshRate,
+      newRefreshRate: this.newRefreshRate,
+      intervalId: this.intervalId,
+    };
+
+    Object.assign(
+      this,
+      {
+        ...defaultDataState,
+        ...preservedState,
+        lastUpdate: new Date().toLocaleString(),
+      },
+      overrides
+    );
+
+    this.detailedSignals = Array.isArray(overrides.detailedSignals)
+      ? [...overrides.detailedSignals]
+      : [];
+  },
+
+  applyFallback(message) {
+    const fallbackMessage = message
+      ? `Unavailable (${message})`
+      : defaultDataState.activeSim;
+
+    this.resetData({
+      activeSim: fallbackMessage,
+      signalAssessment: "Unknown",
+      internetConnectionStatus: "Disconnected",
+    });
+  },
+
+  async fetchAllInfo() {
+    this.atcmd =
+      'AT^TEMP?;^SWITCH_SLOT?;+CGPIAF=1,1,1,1;^DEBUG?;+CPIN?;+CGCONTRDP=1;$QCSIMSTAT?;+CSQ;';
+
+    try {
+      const result = await ATCommandService.execute(this.atcmd, {
+        retries: 3,
+        timeout: 15000,
+      });
+
+      if (!result.ok) {
+        const fallbackMessage = result.error
+          ? result.error.message
+          : 'Risposta AT non valida.';
+
+        this.applyFallback(fallbackMessage);
+        return;
+      }
+
+      const rawdata = result.data;
+
+      if (!rawdata || !rawdata.trim()) {
+        this.applyFallback('Risposta AT vuota dal modem.');
+        return;
+      }
+
+      if (rawdata.includes('ERROR')) {
+        this.applyFallback('Il modem ha restituito un errore.');
+        return;
+      }
+
+      try {
+          const lines = rawdata.split("\n");
+
+          console.log(lines);
+
+          const buildDetailedSignals = () => {
+            const details = [];
+            let currentEntry = null;
+            let scellCounter = 0;
+            let entryCounter = 0;
+            let pendingLteAntennas = [];
+            let pendingLteDiversity = null;
+
+            const roundValue = (value) => {
+              if (typeof value !== "number" || Number.isNaN(value)) {
+                return null;
+              }
+              return Math.round(value * 10) / 10;
+            };
+
+            const parseAntennaLine = (line, prefix) => {
+              const match = line.match(/\(([^)]+)\)/);
+              if (!match) {
+                return [];
+              }
+
+              return match[1].split(",").map((item, index) => {
+                const trimmed = item.trim();
+                const numeric = parseFloat(trimmed);
+                return {
+                  label: `${prefix} ${index + 1}`,
+                  value: Number.isNaN(numeric) ? null : numeric,
+                };
+              });
+            };
+
+            const finalizeEntry = () => {
+              if (!currentEntry) {
+                return;
+              }
+
+              const bandDisplay = currentEntry.band
+                ? currentEntry.technology === "LTE"
+                  ? `Band ${currentEntry.band}`
+                  : currentEntry.band
+                : "N/A";
+
+              let title = "";
+              if (currentEntry.technology === "LTE") {
+                if (currentEntry.role === "primary") {
+                  title = "Primary 4G";
+                } else {
+                  title = currentEntry.caIndex
+                    ? `CA 4G #${currentEntry.caIndex}`
+                    : "CA 4G";
+                }
+              } else {
+                title = "Primary 5G";
+              }
+
+              if (bandDisplay !== "N/A") {
+                title += ` (${bandDisplay})`;
+              }
+
+              const detail = {
+                id: currentEntry.id,
+                title,
+                technology: currentEntry.technology,
+                bandDisplay,
+                bandwidthDisplay: currentEntry.bandwidth || "N/A",
+                channelDisplay: currentEntry.channel || "N/A",
+                pciDisplay: currentEntry.pci || "N/A",
+                rxDiversityDisplay: currentEntry.rxDiversity || "",
+                metrics: [],
+                antennas: [],
+              };
+
+              const addMetric = (key, label, value, unit, calculator) => {
+                const normalized = roundValue(value);
+                if (normalized === null) {
+                  detail.metrics.push({
+                    key,
+                    label,
+                    display: "N/A",
+                    percentage: 0,
+                  });
+                  return;
+                }
+
+                const displayValue = unit ? `${normalized} ${unit}` : `${normalized}`;
+                const percentage = typeof calculator === "function"
+                  ? calculator.call(this, normalized)
+                  : 0;
+
+                detail.metrics.push({
+                  key,
+                  label,
+                  display: displayValue,
+                  percentage,
+                });
+              };
+
+              addMetric(
+                "rsrq",
+                currentEntry.technology === "NR" ? "SS_RSRQ" : "RSRQ",
+                currentEntry.metricsData.rsrq,
+                "dB",
+                this.calculateRSRQPercentage
+              );
+              addMetric(
+                "rsrp",
+                currentEntry.technology === "NR" ? "SS_RSRP" : "RSRP",
+                currentEntry.metricsData.rsrp,
+                "dBm",
+                this.calculateRSRPPercentage
+              );
+              addMetric(
+                "rssi",
+                "RSSI",
+                currentEntry.metricsData.rssi,
+                "dBm",
+                this.calculateRSSIPercentage
+              );
+              addMetric(
+                "sinr",
+                currentEntry.technology === "NR" ? "SS_SINR" : "SINR",
+                currentEntry.metricsData.sinr,
+                "dB",
+                this.calculateSINRPercentage
+              );
+
+              detail.antennas = (currentEntry.antennas || []).map((antenna, index) => {
+                const normalized = roundValue(antenna.value);
+                const label = antenna.label || `Antenna ${index + 1}`;
+                if (normalized === null) {
+                  return {
+                    label,
+                    display: "N/A",
+                    percentage: 0,
+                  };
+                }
+
+                return {
+                  label,
+                  display: `${normalized} dBm`,
+                  percentage: this.calculateRSRPPercentage(normalized),
+                };
+              });
+
+              details.push(detail);
+              currentEntry = null;
+            };
+
+            for (const rawLine of lines) {
+              const line = rawLine.trim();
+              if (!line) {
+                continue;
+              }
+
+              if (line.startsWith("lte_ant_rsrp")) {
+                pendingLteAntennas = parseAntennaLine(line, "Antenna");
+                const diversityMatch = line.match(/rx_diversity:([0-9]+)/i);
+                if (diversityMatch) {
+                  pendingLteDiversity = diversityMatch[1];
+                }
+                continue;
+              }
+
+              if (line.startsWith("pcell:")) {
+                finalizeEntry();
+                currentEntry = {
+                  id: `lte-primary-${entryCounter++}`,
+                  technology: "LTE",
+                  role: "primary",
+                  band: null,
+                  bandwidth: null,
+                  channel: null,
+                  pci: null,
+                  rxDiversity: pendingLteDiversity,
+                  antennas: pendingLteAntennas,
+                  metricsData: {},
+                };
+                pendingLteAntennas = [];
+                pendingLteDiversity = null;
+
+                const bandMatch = line.match(/lte_band:(\d+)/i);
+                if (bandMatch) {
+                  currentEntry.band = bandMatch[1];
+                }
+                const bwMatch = line.match(/lte_band_width:([^\s]+)/i);
+                if (bwMatch) {
+                  currentEntry.bandwidth = bwMatch[1];
+                }
+                continue;
+              }
+
+              if (line.startsWith("scell:")) {
+                finalizeEntry();
+                scellCounter += 1;
+                currentEntry = {
+                  id: `lte-scell-${entryCounter++}`,
+                  technology: "LTE",
+                  role: "secondary",
+                  caIndex: scellCounter,
+                  band: null,
+                  bandwidth: null,
+                  channel: null,
+                  pci: null,
+                  rxDiversity: null,
+                  antennas: [],
+                  metricsData: {},
+                };
+
+                const bandMatch = line.match(/lte_band:(\d+)/i);
+                if (bandMatch) {
+                  currentEntry.band = bandMatch[1];
+                }
+                const bwMatch = line.match(/lte_band_width:([^\s]+)/i);
+                if (bwMatch) {
+                  currentEntry.bandwidth = bwMatch[1];
+                }
+                continue;
+              }
+
+              if (
+                line.startsWith("channel:") &&
+                currentEntry &&
+                currentEntry.technology === "LTE"
+              ) {
+                const channelMatch = line.match(/channel:(\d+)/i);
+                if (channelMatch) {
+                  currentEntry.channel = channelMatch[1];
+                }
+                const pciMatch = line.match(/pci:(\d+)/i);
+                if (pciMatch) {
+                  currentEntry.pci = pciMatch[1];
+                }
+                continue;
+              }
+
+              if (
+                line.startsWith("lte_rsrp:") &&
+                currentEntry &&
+                currentEntry.technology === "LTE"
+              ) {
+                const rsrpMatch = line.match(/lte_rsrp:([\-\d\.]+)/i);
+                if (rsrpMatch) {
+                  currentEntry.metricsData.rsrp = parseFloat(rsrpMatch[1]);
+                }
+                const rsrqMatch = line.match(/rsrq:([\-\d\.]+)/i);
+                if (rsrqMatch) {
+                  currentEntry.metricsData.rsrq = parseFloat(rsrqMatch[1]);
+                }
+                continue;
+              }
+
+              if (
+                line.startsWith("lte_rssi:") &&
+                currentEntry &&
+                currentEntry.technology === "LTE"
+              ) {
+                const rssiMatch = line.match(/lte_rssi:([\-\d\.]+)/i);
+                if (rssiMatch) {
+                  currentEntry.metricsData.rssi = parseFloat(rssiMatch[1]);
+                }
+                const snrMatch = line.match(/lte_snr:([\-\d\.]+)/i);
+                if (snrMatch) {
+                  currentEntry.metricsData.sinr = parseFloat(snrMatch[1]);
+                }
+                continue;
+              }
+
+              if (line.startsWith("nr_band:")) {
+                finalizeEntry();
+                currentEntry = {
+                  id: `nr-primary-${entryCounter++}`,
+                  technology: "NR",
+                  role: "primary",
+                  band: null,
+                  bandwidth: null,
+                  channel: null,
+                  pci: null,
+                  rxDiversity: null,
+                  antennas: [],
+                  metricsData: {},
+                };
+                const bandMatch = line.match(/nr_band:([^\s]+)/i);
+                if (bandMatch) {
+                  currentEntry.band = bandMatch[1];
+                }
+                continue;
+              }
+
+              if (
+                line.startsWith("nr_band_width:") &&
+                currentEntry &&
+                currentEntry.technology === "NR"
+              ) {
+                const parts = line.split(":");
+                currentEntry.bandwidth = parts.length > 1 ? parts[1].trim() : null;
+                continue;
+              }
+
+              if (
+                line.startsWith("nr_channel:") &&
+                currentEntry &&
+                currentEntry.technology === "NR"
+              ) {
+                const parts = line.split(":");
+                currentEntry.channel = parts.length > 1 ? parts[1].trim() : null;
+                continue;
+              }
+
+              if (
+                line.startsWith("nr_pci:") &&
+                currentEntry &&
+                currentEntry.technology === "NR"
+              ) {
+                const parts = line.split(":");
+                currentEntry.pci = parts.length > 1 ? parts[1].trim() : null;
+                continue;
+              }
+
+              if (
+                line.startsWith("nr_rsrp:") &&
+                currentEntry &&
+                currentEntry.technology === "NR"
+              ) {
+                const rsrpMatch = line.match(/nr_rsrp:([\-\d\.]+)/i);
+                if (rsrpMatch) {
+                  currentEntry.metricsData.rsrp = parseFloat(rsrpMatch[1]);
+                }
+                const diversityMatch = line.match(/rx_diversity:\s*([\d]+)/i);
+                if (diversityMatch) {
+                  currentEntry.rxDiversity = diversityMatch[1];
+                }
+                currentEntry.antennas = parseAntennaLine(line, "Antenna");
+                continue;
+              }
+
+              if (
+                line.startsWith("nr_rsrq:") &&
+                currentEntry &&
+                currentEntry.technology === "NR"
+              ) {
+                const rsrqMatch = line.match(/nr_rsrq:([\-\d\.]+)/i);
+                if (rsrqMatch) {
+                  currentEntry.metricsData.rsrq = parseFloat(rsrqMatch[1]);
+                }
+                continue;
+              }
+
+              if (
+                line.startsWith("nr_rssi:") &&
+                currentEntry &&
+                currentEntry.technology === "NR"
+              ) {
+                const rssiMatch = line.match(/nr_rssi:([\-\d\.]+)/i);
+                if (rssiMatch) {
+                  currentEntry.metricsData.rssi = parseFloat(rssiMatch[1]);
+                }
+                continue;
+              }
+
+              if (
+                line.startsWith("nr_snr:") &&
+                currentEntry &&
+                currentEntry.technology === "NR"
+              ) {
+                const snrMatch = line.match(/nr_snr:([\-\d\.]+)/i);
+                if (snrMatch) {
+                  currentEntry.metricsData.sinr = parseFloat(snrMatch[1]);
+                }
+                continue;
+              }
+            }
+
+            finalizeEntry();
+            return details;
+          };
+
+          this.detailedSignals = buildDetailedSignals();
+
+          // --- Temperature ---
+          // find this example value from lines "+QTEMP:"cpuss-0-usr","50"
+          try {
+            this.temperature = lines
+              .find((line) => line.includes('TSENS:'))
+              .split(":")[1]
+              .replace(/"/g, "");
+          } catch (error) {
+            this.temperature = lines
+              .find((line) => line.includes('TSENS:'))
+              .split(",")[1]
+              .replace(/"/g, "");
+          }
+
+          // --- SIM Status ---
+          // find this example value from lines "+QSIMSTAT: 0,1"
+          // Only get the last digit of 0,1
+          const sim_status = lines
+            .find((line) => line.includes("+CPIN:"))
+            .split(":")[1]
+            .replace(/"/g, "")
+            
+// console.log(sim_status)
+          if (sim_status == "READY") {
+            this.simStatus = "Active";
+          } else {
+            this.simStatus = sim_status;
+          }
+
+          // --- Active SIM ---
+          // find this example value from lines "+QUIMSLOT: 1"
+          const current_sim = lines
+            .find((line) => line.includes("ENABLE"))
+            .split(" ")[0]
+            .replace(/\D/g, "");
+          if (current_sim == 1) {
+            this.activeSim = "SIM 1";
+          } else if (current_sim == 2) {
+            this.activeSim = "SIM 2";
+          } else {
+            this.activeSim = "No SIM";
+          }
+
+          // --- Network Provider & MCCMNC ---
+          const mccLine = lines.find((line) => line.includes("mcc:"));
+          if (mccLine) {
+            const mccMatch = mccLine.match(/mcc:\s*(\d+)/i);
+            const mncMatch = mccLine.match(/mnc:\s*(\d+)/i);
+            const mccmncCode =
+              mccMatch && mncMatch
+                ? `${mccMatch[1]}${mncMatch[1].padStart(2, "0")}`
+                : mccLine.replace(/\D/g, "");
+
+            const networkProviderMap = {
+              ...italianNetworkProviders,
+              "46000": "China Mobile",
+              "46001": "China Unicom",
+              "46011": "China Telecom",
+            };
+
+            this.mccmnc = mccmncCode || "Unknown";
+            this.networkProvider =
+              networkProviderMap[mccmncCode] ||
+              (mccmncCode ? mccmncCode : "Unknown");
+          } else {
+            this.mccmnc = "Unknown";
+            this.networkProvider = "Unknown";
+          }
+          // --- APN ---
+          // find this example value from lines "+CGCONTRDP: 1,0,\"internet.dito.ph\",\"100.65.141.236\",\"36.5.141.64.76.204.39.68.23.210.251.16.49.239.42.149\", \"254.128.0.0.0.0.0.0.0.0.0.0.0.0.0.1\",\"131.226.72.19\",\"131.226.73.19\"\r"
+          this.apn = lines
+            .find((line) => line.includes("+CGCONTRDP:"))
+            .split(",")[2]
+            .replace(/"/g, "");
+
+          // --- Network Mode ---
+          // find this example value from lines "+QENG: \"servingcell\",\"NOCONN\",\"NR5G-SA\",\"TDD\",515,66,7000C4001,475,702000,620640,78,12,-83,-3,16,1,-\r"
+
+          const ratLine = lines.find((line) => line.includes('RAT:'));
+          const network_mode = ratLine
+            ? ratLine.split(":")[1].trim()
+            : "Unknown";
+          this.networkMode = network_mode;
+
+          // --- Bands ---
+          // Get all the values with LTE BAND n (for example, LTE BAND 3, LTE BAND 1) and then store them in an array
+          const bands = lines.filter((line) =>
+            line.includes("lte_band:")
+          );
+
+          // since it includes the whole line, we need to extract the band part only
+          for (let i = 0; i < bands.length; i++) {
+            bands[i] = bands[i].split(":")[2].split(" ")[0].replace(/"/g, "");
+          }
+
+          // Get all the values with NR BAND n (for example, NR BAND 3, NR BAND 1) and then store them in an array
+          const bands_5g = lines.filter((line) =>
+            line.includes("nr_band:")
+          );
+          // since it includes the whole line, we need to extract the band number only
+          for (let i = 0; i < bands_5g.length; i++) {
+            bands_5g[i] = bands_5g[i].split(":")[1].replace(/"/g, "");
+          }
+
+          // Combine the bands and bands_5g arrays seperated by a comma. however, bands or bands_5g can be empty
+          if (bands.length > 0 && bands_5g.length > 0) {
+            this.bands = bands.join(", ") + ", " + bands_5g.join(", ");
+          } else if (bands.length > 0) {
+            this.bands = bands.join(", ");
+          } else if (bands_5g.length > 0) {
+            this.bands = bands_5g.join(", ");
+          } else {
+            this.bands = "No Bands";
+          }
+
+          // --- Bandwidth ---
+          const bandwidth = lines.filter((line) =>
+            line.includes("lte_band_width:")
+          );
+          for (let i = 0; i < bandwidth.length; i++) {
+            bandwidth[i] = bandwidth[i].split(":")[3].replace(/"/g, "");
+          }
+          const bandwidth_5gs = lines.filter((line) =>
+            line.includes("nr_band_width:")
+          );
+console.log(bandwidth_5gs)
+          for (let i = 0; i < bandwidth_5gs.length; i++) {
+            bandwidth_5gs[i] = bandwidth_5gs[i].split(":")[1];
+          }
+          if (bandwidth.length > 0 && bandwidth_5gs.length > 0) {
+            this.bandwidth = bandwidth.join(", ") + ", " + bandwidth_5gs.join(", ");
+          } else if (bandwidth.length > 0) {
+            this.bandwidth = bandwidth.join(", ");
+          } else if (bandwidth_5gs.length > 0) {
+            this.bandwidth = bandwidth_5gs.join(", ");
+          } else {
+            this.bandwidth = "Unknown Bandwidth";
+          }
+
+          // --- E/ARFCN ---
+          const lteArfcnLines = lines.filter((line) =>
+            line.startsWith("channel:")
+          );
+          const nrArfcnLines = lines.filter((line) =>
+            line.includes("nr_channel:")
+          );
+
+          const lteArfcns = lteArfcnLines
+            .map((line) => {
+              const segment = line.split(":")[1];
+              if (!segment) {
+                return null;
+              }
+              return segment.split(" ")[0].trim();
+            })
+            .filter((value) => value && value.length > 0);
+
+          const nrArfcns = nrArfcnLines
+            .map((line) => {
+              const segment = line.split(":")[1];
+              return segment ? segment.trim() : null;
+            })
+            .filter((value) => value && value.length > 0);
+
+          const allArfcns = [...lteArfcns, ...nrArfcns];
+          if (allArfcns.length > 0) {
+            this.earfcns = allArfcns.join(", ");
+          } else {
+            this.earfcns = "Unknown E/ARFCN";
+          }
+
+          // --- PCI ---
+          const ltePciLines = lines.filter(
+            (line) => line.startsWith("channel:") && line.includes('pci:')
+          );
+          const nrPciLines = lines.filter((line) =>
+            line.includes('nr_pci:')
+          );
+
+          const ltePcis = ltePciLines
+            .map((line) => {
+              const segment = line.split('pci:')[1];
+              return segment ? segment.trim().split(' ')[0] : null;
+            })
+            .filter((value) => value && value.length > 0);
+
+          const nrPcis = nrPciLines
+            .map((line) => {
+              const segment = line.split(":")[1];
+              return segment ? segment.trim() : null;
+            })
+            .filter((value) => value && value.length > 0);
+
+          const allPcis = [...ltePcis, ...nrPcis];
+          if (allPcis.length > 0) {
+            this.pccPCI = allPcis.join(", ");
+            this.sccPCI = "-";
+          } else {
+            this.pccPCI = "0";
+            this.sccPCI = "-";
+          }
+
+          // --- IPv4 and IPv6 ---
+          // find the value from line "IPV4"
+          this.ipv4 = lines
+            .find((line) => line.includes("+CGCONTRDP:"))
+            .split(",")[3]
+            .replace(/"/g, "");
+
+          // find the value from line "IPV6"
+          this.ipv6 = lines
+            .find((line) => line.includes("+CGCONTRDP:"))
+            .split(",")[4]
+            .replace(/"/g, "");
+/*
+          // Traffic Stats
+          // for NR traffic stats: +QGDNRCNT: 3263753367,109876105
+          this.nrDownload = lines
+            .find((line) => line.includes("+QGDNRCNT:"))
+            //.split(",")[0]
+            // remove the +QGDNRCNT: part
+            .replace("+QGDNRCNT: ", "");
+
+          this.nrUpload = lines
+            .find((line) => line.includes("+QGDNRCNT:"))
+            //.split(",")[1];
+
+          // for non-NR traffic stats: +QGDCNT: 247357510,6864571506
+          this.nonNrDownload = lines
+            .find((line) => line.includes("+QGDCNT:"))
+            //.split(",")[1];
+
+          this.nonNrUpload = lines
+            .find((line) => line.includes("+QGDCNT:"))
+            .split(",")[0]
+            // remove the +QGDCNT: part
+            .replace("+QGDCNT: ", "");
+
+          // Add the nrDownload and nonNrDownload together
+          this.downloadStat =
+            parseInt(this.nrDownload) + parseInt(this.nonNrDownload);
+
+          // Add the nrUpload and nonNrUpload together
+          this.uploadStat =
+            parseInt(this.nrUpload) + parseInt(this.nonNrUpload);
+
+          // Convert the downloadStat and uploadStat bytes to readable size
+          this.downloadStat = this.bytesToSize(this.downloadStat);
+          this.uploadStat = this.bytesToSize(this.uploadStat);
+
+          console.log(this.downloadStat);
+          console.log(this.uploadStat);
+*/	
+          // Signal Informations
+
+          const currentNetworkMode = this.networkMode;
+          const hasNRStats = lines.some((line) =>
+            line.includes('nr_rsrp:')
+          );
+          const hasLTEStats = lines.some((line) =>
+            line.includes('lte_rsrp:')
+          );
+
+          const normalizeCellId = (value) => {
+            if (!value) {
+              return null;
+            }
+            const trimmed = value.trim().replace(/"/g, "");
+            if (trimmed === "") {
+              return null;
+            }
+            if (/^0x/i.test(trimmed)) {
+              return trimmed.replace(/^0x/i, "").toUpperCase();
+            }
+            if (/^[0-9A-Fa-f]+$/.test(trimmed) && /[A-Fa-f]/.test(trimmed)) {
+              return trimmed.toUpperCase();
+            }
+            const decimalValue = parseInt(trimmed, 10);
+            if (Number.isNaN(decimalValue)) {
+              return null;
+            }
+            return decimalValue.toString(16).toUpperCase();
+          };
+
+          const formatCellInfo = (hexValue) => {
+            if (!hexValue) {
+              return null;
+            }
+            const longDec = parseInt(hexValue, 16);
+            const shortHex = hexValue.slice(-2);
+            const shortDec = parseInt(shortHex, 16);
+            const eNbHex = hexValue.slice(0, -2);
+            const eNbDec = eNbHex ? parseInt(eNbHex, 16) : NaN;
+            const cellDisplay =
+              "Short " +
+              shortHex +
+              "(" +
+              (Number.isNaN(shortDec) ? "-" : shortDec) +
+              ")" +
+              ", " +
+              "Long " +
+              hexValue +
+              "(" +
+              (Number.isNaN(longDec) ? "-" : longDec) +
+              ")";
+            return {
+              display: cellDisplay,
+              eNbId: Number.isNaN(eNbDec) ? "-" : eNbDec,
+            };
+          };
+
+          const formatTac = (value) => {
+            if (!value) {
+              return null;
+            }
+            const trimmed = value.trim().replace(/"/g, "");
+            if (trimmed === "") {
+              return null;
+            }
+            const isHexCandidate = /[A-Fa-f]/.test(trimmed) || /^0x/i.test(trimmed);
+            const numericValue = isHexCandidate
+              ? parseInt(trimmed, 16)
+              : parseInt(trimmed, 10);
+            if (Number.isNaN(numericValue)) {
+              const fallback = parseInt(trimmed, 16);
+              if (Number.isNaN(fallback)) {
+                return null;
+              }
+              return fallback + " (" + trimmed + ")";
+            }
+            return numericValue + " (" + trimmed + ")";
+          };
+
+          let cellInfoSet = false;
+          let signalSamples = [];
+
+          if (hasNRStats || hasLTEStats) {
+            if (!hasNRStats) {
+              this.rsrpNR = "-";
+              this.rsrqNR = "-";
+              this.sinrNR = "-";
+              this.rsrpNRPercentage = 0;
+              this.rsrqNRPercentage = 0;
+              this.sinrNRPercentage = 0;
+            }
+
+            if (!hasLTEStats) {
+              this.rsrpLTE = "-";
+              this.rsrqLTE = "-";
+              this.sinrLTE = "-";
+              this.rsrpLTEPercentage = 0;
+              this.rsrqLTEPercentage = 0;
+              this.sinrLTEPercentage = 0;
+            }
+
+            if (hasLTEStats) {
+              const lteCellIdLine = lines.find((line) =>
+                line.includes('lte_cell_id:')
+              );
+              if (lteCellIdLine) {
+                const lteCellIdValue = lteCellIdLine.split(":")[1];
+                const cellInfo = formatCellInfo(
+                  normalizeCellId(lteCellIdValue)
+                );
+                if (cellInfo) {
+                  this.cellID = cellInfo.display;
+                  this.eNBID = cellInfo.eNbId;
+                  cellInfoSet = true;
+                }
+              }
+
+              const lteTacLine = lines.find((line) =>
+                line.includes('lte_tac:')
+              );
+              if (lteTacLine) {
+                const tacDisplay = formatTac(lteTacLine.split(":")[1]);
+                if (tacDisplay) {
+                  this.tac = tacDisplay;
+                }
+              }
+
+              const csqLine = lines.find((line) =>
+                line.includes("+CSQ:")
+              );
+              if (csqLine) {
+                this.csq = csqLine
+                  .split(" ")[1]
+                  .replace("+CSQ: ", "")
+                  .replace(/"/g, "");
+              } else {
+                this.csq = hasNRStats ? "LTE+NR Mode" : "LTE Mode";
+              }
+
+              const lteRsrpLine = lines.find((line) =>
+                line.includes('lte_rsrp:')
+              );
+              if (lteRsrpLine) {
+                const rsrpParts = lteRsrpLine.split(',');
+                const rsrpValue = rsrpParts[0]
+                  ? rsrpParts[0].split(":")[1].trim()
+                  : null;
+                const rsrqValue = rsrpParts[1]
+                  ? rsrpParts[1].split(":")[1].trim()
+                  : null;
+                this.rsrpLTE = rsrpValue || "-";
+                this.rsrqLTE = rsrqValue || "-";
+              }
+
+              const lteSnrLine = lines.find((line) =>
+                line.includes('lte_snr:')
+              );
+              if (lteSnrLine) {
+                const snrSegment = lteSnrLine.split('lte_snr:')[1];
+                this.sinrLTE = snrSegment
+                  ? snrSegment.trim().split(',')[0]
+                  : "-";
+              }
+
+              const lteRssiLine = lines.find((line) =>
+                line.includes('lte_rssi:')
+              );
+              if (lteRssiLine) {
+                const rssiMatch = lteRssiLine.match(/lte_rssi:([^,\s]+)/i);
+                this.rssiLTE = rssiMatch ? rssiMatch[1].trim() : "-";
+              } else {
+                this.rssiLTE = "-";
+              }
+
+              this.rsrpLTEPercentage = this.calculateRSRPPercentage(
+                parseFloat(this.rsrpLTE)
+              );
+              this.rsrqLTEPercentage = this.calculateRSRQPercentage(
+                parseFloat(this.rsrqLTE)
+              );
+              this.sinrLTEPercentage = this.calculateSINRPercentage(
+                parseFloat(this.sinrLTE)
+              );
+              this.rssiLTEPercentage = this.calculateRSSIPercentage(
+                parseFloat(this.rssiLTE)
+              );
+
+              const lteSignal = this.calculateSignalPercentage(
+                this.rsrpLTEPercentage,
+                this.sinrLTEPercentage
+              );
+              signalSamples.push(lteSignal);
+            }
+
+            if (hasNRStats) {
+              const nrCellIdLine = lines.find((line) =>
+                line.includes('nr_cell_id:')
+              );
+              if (nrCellIdLine && !cellInfoSet) {
+                const nrCellIdValue = nrCellIdLine.split(":")[1];
+                const cellInfo = formatCellInfo(
+                  normalizeCellId(nrCellIdValue)
+                );
+                if (cellInfo) {
+                  this.cellID = cellInfo.display;
+                  this.eNBID = cellInfo.eNbId;
+                  cellInfoSet = true;
+                }
+              }
+
+              const nrTacLine = lines.find((line) =>
+                line.includes('nr_tac:')
+              );
+              if (nrTacLine && !cellInfoSet) {
+                const tacDisplay = formatTac(nrTacLine.split(":")[1]);
+                if (tacDisplay) {
+                  this.tac = tacDisplay;
+                }
+              }
+
+              if (!hasLTEStats && !lines.some((line) => line.includes("+CSQ:"))) {
+                this.csq = "NR Mode";
+              }
+
+              const nrRsrpLine = lines.find((line) =>
+                line.includes('nr_rsrp:')
+              );
+              if (nrRsrpLine) {
+                const rsrpSegment = nrRsrpLine.split(":")[1];
+                this.rsrpNR = rsrpSegment
+                  ? rsrpSegment.split(" ")[0].trim()
+                  : "-";
+              }
+
+              const nrRsrqLine = lines.find((line) =>
+                line.includes('nr_rsrq:')
+              );
+              if (nrRsrqLine) {
+                const rsrqSegment = nrRsrqLine.split(":")[1];
+                this.rsrqNR = rsrqSegment ? rsrqSegment.trim() : "-";
+              }
+
+              const nrSnrLine = lines.find((line) =>
+                line.includes('nr_snr:')
+              );
+              if (nrSnrLine) {
+                const snrSegment = nrSnrLine.split(":")[1];
+                this.sinrNR = snrSegment ? snrSegment.trim() : "-";
+              }
+
+              const nrRssiLine = lines.find((line) =>
+                line.includes('nr_rssi:')
+              );
+              if (nrRssiLine) {
+                const rssiMatch = nrRssiLine.match(/nr_rssi:([^,\s]+)/i);
+                this.rssiNR = rssiMatch ? rssiMatch[1].trim() : "-";
+              } else {
+                this.rssiNR = "-";
+              }
+
+              this.rsrpNRPercentage = this.calculateRSRPPercentage(
+                parseFloat(this.rsrpNR)
+              );
+              this.rsrqNRPercentage = this.calculateRSRQPercentage(
+                parseFloat(this.rsrqNR)
+              );
+              this.sinrNRPercentage = this.calculateSINRPercentage(
+                parseFloat(this.sinrNR)
+              );
+              this.rssiNRPercentage = this.calculateRSSIPercentage(
+                parseFloat(this.rssiNR)
+              );
+
+              const nrSignal = this.calculateSignalPercentage(
+                this.rsrpNRPercentage,
+                this.sinrNRPercentage
+              );
+              signalSamples.push(nrSignal);
+            }
+
+            if (signalSamples.length > 0) {
+              const totalSignal = signalSamples.reduce(
+                (accumulator, current) => accumulator + current,
+                0
+              );
+              this.signalPercentage = Math.round(
+                totalSignal / signalSamples.length
+              );
+              this.signalAssessment = this.signalQuality(
+                this.signalPercentage
+              );
+            } else {
+              this.signalPercentage = 0;
+              this.signalAssessment = "No Signal";
+            }
+          } else if (currentNetworkMode == "5G NSA") {
+            // find the value from line "+QENG: \"LTE\" for LTE
+            // LongCID
+            const longCID = lines
+              .find((line) => line.includes('+QENG: "LTE"'))
+              .split(",")[4]
+              .replace(/"/g, "");
+
+            // Get the eNBID. Its just Cell ID minus the last 2 characters
+            this.eNBID = parseInt(longCID.substring(0, longCID.length - 2), 16);
+
+            // Get the short Cell ID (Last 2 characters of the Cell ID)
+            const shortCID = longCID.substring(longCID.length - 2);
+
+            // cellID
+            this.cellID =
+              "Short " +
+              shortCID +
+              "(" +
+              parseInt(shortCID, 16) +
+              ")" +
+              ", " +
+              "Long " +
+              longCID +
+              "(" +
+              parseInt(longCID, 16) +
+              ")";
+
+            // TAC
+            const localTac = lines
+              .find((line) => line.includes('+QENG: "LTE"'))
+              .split(",")[10]
+              .replace(/"/g, "");
+            this.tac = parseInt(localTac, 16) + " ("+localTac+")";
+
+            this.cellID =
+              "Short " +
+              shortCID +
+              "(" +
+              parseInt(shortCID, 16) +
+              ")" +
+              ", " +
+              "Long " +
+              longCID +
+              "(" +
+              parseInt(longCID, 16) +
+              ")";
+            // CSQ
+            this.csq = lines
+              .find((line) => line.includes("+CSQ:"))
+              .split(" ")[1]
+              .replace("+CSQ: ", "")
+              .replace(/"/g, "");
+
+            // RSRP LTE
+            this.rsrpLTE = lines
+              .find((line) => line.includes('+QENG: "LTE"'))
+              .split(",")[11]
+              .replace(/"/g, "");
+
+            // RSRQ LTE
+            this.rsrqLTE = lines
+              .find((line) => line.includes('+QENG: "LTE"'))
+              .split(",")[12]
+              .replace(/"/g, "");
+
+            // RSSI LTE
+            this.rssiLTE = lines
+              .find((line) => line.includes('+QENG: "LTE"'))
+              .split(",")[13]
+              .replace(/"/g, "");
+
+            // SINR LTE
+            this.sinrLTE = lines
+              .find((line) => line.includes('+QENG: "LTE"'))
+              .split(",")[14]
+              .replace(/"/g, "");
+
+            // Calculate the RSRP LTE Percentage
+            this.rsrpLTEPercentage = this.calculateRSRPPercentage(
+              parseInt(this.rsrpLTE)
+            );
+
+            // Calculate the RSRQ LTE Percentage
+            this.rsrqLTEPercentage = this.calculateRSRQPercentage(
+              parseInt(this.rsrqLTE)
+            );
+
+            // Calculate the SINR LTE Percentage
+            this.sinrLTEPercentage = this.calculateSINRPercentage(
+              parseInt(this.sinrLTE)
+            );
+
+            // Calculate the RSSI LTE Percentage
+            this.rssiLTEPercentage = this.calculateRSSIPercentage(
+              parseInt(this.rssiLTE)
+            );
+
+            // Calculate the Signal Percentage
+            const lte_signal_percentage =
+              this.calculateSignalPercentage(
+                this.rsrpLTEPercentage,
+                this.sinrLTEPercentage
+              );
+
+            // find the value from line "+QENG: \"NR5G-NSA\" for NR5G
+            // RSRP NR
+            this.rsrpNR = lines
+              .find((line) => line.includes('+QENG: "NR5G-NSA"'))
+              .split(",")[4]
+              .replace(/"/g, "");
+
+            // SINR NR
+            this.sinrNR = lines
+              .find((line) => line.includes('+QENG: "NR5G-NSA"'))
+              .split(",")[5]
+              .replace(/"/g, "");
+
+            // RSRQ NR
+            this.rsrqNR = lines
+              .find((line) => line.includes('+QENG: "NR5G-NSA"'))
+              .split(",")[6]
+              .replace(/"/g, "");
+
+            try {
+              this.rssiNR = lines
+                .find((line) => line.includes('+QENG: "NR5G-NSA"'))
+                .split(",")[7]
+                .replace(/"/g, "");
+            } catch (error) {
+              this.rssiNR = "-";
+            }
+
+            // Calculate the RSRP NR Percentage
+            this.rsrpNRPercentage = this.calculateRSRPPercentage(
+              parseInt(this.rsrpNR)
+            );
+
+            // Calculate the RSRQ NR Percentage
+            this.rsrqNRPercentage = this.calculateRSRQPercentage(
+              parseInt(this.rsrqNR)
+            );
+
+            // Calculate the SINR NR Percentage
+            this.sinrNRPercentage = this.calculateSINRPercentage(
+              parseInt(this.sinrNR)
+            );
+
+            // Calculate the RSSI NR Percentage
+            this.rssiNRPercentage = this.calculateRSSIPercentage(
+              parseInt(this.rssiNR)
+            );
+
+            // Calculate the Signal Percentage
+            const nr_signal_percentage = this.calculateSignalPercentage(
+              this.rsrpNRPercentage,
+              this.sinrNRPercentage
+            );
+
+            // Average the LTE and NR Signal Percentages
+            this.signalPercentage =
+              (lte_signal_percentage + nr_signal_percentage) / 2;
+
+            // Calculate the Signal Assessment
+            this.signalAssessment = this.signalQuality(
+              this.signalPercentage
+            );
+          } else {
+            this.signalAssessment = "No Signal";
+          }
+        this.lastUpdate = new Date().toLocaleString();
+      } catch (parseError) {
+        console.error("Error while parsing the AT response", parseError);
+        this.applyFallback("Failed to parse the AT response.");
+      }
+    } catch (error) {
+      console.error("Error while executing the AT command", error);
+      this.applyFallback(
+        error.message || "Unknown error occurred during the AT request."
+      );
+    }
+  },
+
+
+  bytesToSize(bytes) {
+    const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
+    if (bytes == 0) return "0 Byte";
+    const i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
+    return Math.round(bytes / Math.pow(1024, i), 2) + " " + sizes[i];
+  },
+
+  requestPing() {
+    return fetch("/cgi-bin/get_ping")
+      .then((response) => response.text())
+      .then((data) => {
+        return data;
+      })
+      .catch((error) => {
+        console.error("Error:", error);
+        // Throw the error again to ensure it's propagated
+        throw error;
+      });
+  },
+
+  calculate_lte_bw(lte_bw) {
+    const BANDWIDTH_MAP = {
+      0: 1.4,
+      1: 3,
+      2: 5,
+      3: 10,
+      4: 15,
+      5: 20,
+      6: 40,
+      7: 80,
+      8: 100,
+      9: 200,
+    };
+    return BANDWIDTH_MAP[lte_bw];
+  },
+
+  calculate_nr_bw(nr_bw) {
+    const NR_BANDWIDTH_MAP = {
+      0: 5,
+      1: 10,
+      2: 15,
+      3: 20,
+      4: 25,
+      5: 30,
+      6: 40,
+      7: 50,
+      8: 60,
+      9: 70,
+      10: 80,
+      11: 90,
+      12: 100,
+      13: 200,
+      14: 400,
+    };
+    return NR_BANDWIDTH_MAP[nr_bw];
+  },
+
+  calculateRSSIPercentage(rssi) {
+    const RSSI_MIN = -110;
+    const RSSI_MAX = -30;
+
+    if (isNaN(rssi)) {
+      return 0;
+    }
+
+    if (rssi <= RSSI_MIN) {
+      return 0;
+    }
+
+    let percentage =
+      ((rssi - RSSI_MIN) / (RSSI_MAX - RSSI_MIN)) * 100;
+
+    if (percentage > 100) {
+      percentage = 100;
+    }
+
+    if (percentage < 15) {
+      percentage = 15;
+    }
+
+    return Math.round(percentage);
+  },
+
+  calculateRSRPPercentage(rsrp) {
+    let RSRP_min = -135;
+    let RSRP_max = -65;
+
+    // If rsrp is null, return 0%
+    if (isNaN(rsrp) || rsrp < -140) {
+      return 0;
+    }
+
+    let percentage = ((rsrp - RSRP_min) / (RSRP_max - RSRP_min)) * 100;
+
+    if (percentage > 100) {
+      percentage = 100;
+    }
+
+    // if percentage is less than 15%, make it 15%
+    if (percentage < 15) {
+      percentage = 15;
+    }
+
+    return Math.round(percentage);
+  },
+
+  calculateRSRQPercentage(rsrq) {
+    let RSRQ_min = -20;
+    let RSRQ_max = -8;
+
+    // If rsrq is null, return 0%
+    if (isNaN(rsrq) || rsrq < -20) {
+      return 0;
+    }
+
+    let percentage = ((rsrq - RSRQ_min) / (RSRQ_max - RSRQ_min)) * 100;
+
+    if (percentage > 100) {
+      percentage = 100;
+    }
+
+    // if percentage is less than 15%, make it 15%
+    if (percentage < 15) {
+      percentage = 15;
+    }
+
+    return Math.round(percentage);
+  },
+
+  calculateSINRPercentage(sinr) {
+    let SINR_min = -10; // Changed from 0
+    let SINR_max = 35;
+
+    // If sinr is null, return 0%
+    if (isNaN(sinr) || sinr < -10) {
+      return 0;
+    }
+
+    let percentage = ((sinr - SINR_min) / (SINR_max - SINR_min)) * 100;
+
+    if (percentage > 100) {
+      percentage = 100;
+    }
+
+    // if percentage is less than 15%, make it 15%
+    if (percentage < 15) {
+      percentage = 15;
+    }
+
+    return Math.round(percentage);
+  },
+
+  // Calculate the overall signal assessment
+  calculateSignalPercentage(rsrpNRPercentage, sinrNRPercentage) {
+    // Get the average of the RSRP Percentage and SINR Percentage
+    let average = (rsrpNRPercentage + sinrNRPercentage) / 2;
+    return Math.round(average);
+  },
+
+  getProgressBarClass(percentage) {
+    if (percentage >= 60) {
+      return "bg-success is-medium";
+    } else if (percentage >= 40) {
+      return "bg-warning is-warning is-medium";
+    }
+    return "bg-danger is-medium";
+  },
+
+  signalQuality(percentage) {
+    if (percentage >= 80) {
+      return "Excellent";
+    } else if (percentage >= 60) {
+      return "Good";
+    } else if (percentage >= 40) {
+      return "Fair";
+    } else if (percentage >= 0) {
+      return "Poor";
+    } else {
+      return "No Signal";
+    }
+  },
+
+  fetchUpTime() {
+    // Content-Type: text/plain
+    //
+    // 1 hour 44, minute
+    fetch("/cgi-bin/get_uptime")
+      .then((response) => response.text())
+      .then((data) => {
+        // Example result
+        // 01:17:02 up 3 days,  2:41,  load average: 0.65, 0.66, 0.60
+
+        // Look for xx days in the result
+        const days = data.match(/(\d+) day/);
+        // Do the same for hours
+        const hours = data.match(/(\d+) hour/);
+        // Do the same for minutes
+        const minutes = data.match(/(\d+) min/);
+        // 2:41
+        const hoursAndMinutes = data.match(/(\d+):(\d+),/);
+
+        if (hoursAndMinutes != null) {
+          if (days != null) {
+            if (days[1] === "1") {
+              if (hoursAndMinutes[1] === "1") {
+                this.uptime =
+                  days[1] +
+                  " day, " +
+                  hoursAndMinutes[1] +
+                  " hour " +
+                  hoursAndMinutes[2] +
+                  " minutes";
+              } else if (hoursAndMinutes[2] === 1) {
+                this.uptime =
+                  days[1] +
+                  " day, " +
+                  hoursAndMinutes[1] +
+                  " hours " +
+                  hoursAndMinutes[2] +
+                  " minute";
+              } else {
+                this.uptime =
+                  days[1] +
+                  " day, " +
+                  hoursAndMinutes[1] +
+                  " hours " +
+                  hoursAndMinutes[2] +
+                  " minutes";
+              }
+            } else {
+              if (hoursAndMinutes[1] === "1") {
+                this.uptime =
+                  days[1] +
+                  " days, " +
+                  hoursAndMinutes[1] +
+                  " hour " +
+                  hoursAndMinutes[2] +
+                  " minutes";
+              } else if (hoursAndMinutes[2] === 1) {
+                this.uptime =
+                  days[1] +
+                  " days, " +
+                  hoursAndMinutes[1] +
+                  " hours " +
+                  hoursAndMinutes[2] +
+                  " minute";
+              } else {
+                this.uptime =
+                  days[1] +
+                  " days, " +
+                  hoursAndMinutes[1] +
+                  " hours " +
+                  hoursAndMinutes[2] +
+                  " minutes";
+              }
+            }
+          } else {
+            if (hoursAndMinutes[1] === "1") {
+              this.uptime =
+                hoursAndMinutes[1] +
+                " hour " +
+                hoursAndMinutes[2] +
+                " minutes";
+            } else if (hoursAndMinutes[2] === 1) {
+              this.uptime =
+                hoursAndMinutes[1] +
+                " hours " +
+                hoursAndMinutes[2] +
+                " minute";
+            } else {
+              this.uptime =
+                hoursAndMinutes[1] +
+                " hours " +
+                hoursAndMinutes[2] +
+                " minutes";
+            }
+          }
+        } else if (days != null) {
+          if (hours != null) {
+            if (days[1] === "1") {
+              if (hours[1] === "1") {
+                this.uptime = days[1] + " day, " + hours[1] + " hour";
+              } else {
+                this.uptime = days[1] + " day, " + hours[1] + " hours";
+              }
+            } else {
+              if (hours[1] === "1") {
+                this.uptime = days[1] + " days, " + hours[1] + " hour";
+              } else {
+                this.uptime = days[1] + " days, " + hours[1] + " hours";
+              }
+            }
+          } else if (minutes != null) {
+            if (days[1] === "1") {
+              if (minutes[1] === "1") {
+                this.uptime =
+                  days[1] + " day, " + minutes[1] + " minute";
+              } else {
+                this.uptime =
+                  days[1] + " day, " + minutes[1] + " minutes";
+              }
+            } else {
+              if (minutes[1] === "1") {
+                this.uptime =
+                  days[1] + " days, " + minutes[1] + " minute";
+              } else {
+                this.uptime =
+                  days[1] + " days, " + minutes[1] + " minutes";
+              }
+            }
+          } else {
+            if (days[1] === "1") {
+              this.uptime = days[1] + " day";
+            } else {
+              this.uptime = days[1] + " days";
+            }
+          }
+        } else if (hours != null) {
+          if (hours[1] === "1") {
+            this.uptime = hours[1] + " hour";
+          } else {
+            this.uptime = hours[1] + " hours";
+          }
+        } else if (minutes != null) {
+          if (minutes[1] === "1") {
+            this.uptime = minutes[1] + " minute";
+          } else {
+            this.uptime = minutes[1] + " minutes";
+          }
+        } else {
+          this.uptime = "Unknown Time";
+        }
+      });
+  },
+
+  updateRefreshRate() {
+    // Check if the refresh rate is less than 3
+    if (this.newRefreshRate < 3) {
+      this.newRefreshRate = 3;
+    }
+
+    // Clear the old interval
+    clearInterval(this.intervalId);
+
+    // Set the refresh rate
+    this.refreshRate = this.newRefreshRate;
+    console.log("Refresh Rate Updated to " + this.refreshRate);
+
+    // Store the refresh rate in local storage or session storage
+    localStorage.setItem("refreshRate", this.refreshRate);
+
+    // Initialize with the new refresh rate
+    this.init();
+  },
+
+  init() {
+    // Fetch uptime
+    this.fetchUpTime();
+
+    // Retrieve the refresh rate from local storage or session storage
+    const storedRefreshRate = localStorage.getItem("refreshRate");
+
+    // If a refresh rate is stored, use it; otherwise, use a default value
+    this.refreshRate = storedRefreshRate
+      ? parseInt(storedRefreshRate)
+      : 3; // Change 3 to your desired default value
+
+    this.fetchAllInfo();
+
+    this.requestPing()
+      .then((data) => {
+        const response = data.trim();
+        // Trim any leading/trailing spaces
+        if (response === "OK") {
+          this.internetConnectionStatus = "Connected";
+        } else {
+          this.internetConnectionStatus = "Disconnected";
+        }
+      })
+      .catch((error) => {
+        console.error("Error:", error);
+        this.internetConnectionStatus = "Disconnected";
+      });
+
+    this.lastUpdate = new Date().toLocaleString();
+    console.log("Initialized");
+
+    // Set the refresh rate for interval
+    this.intervalId = setInterval(() => {
+      this.fetchUpTime();
+
+      this.fetchAllInfo();
+
+      this.requestPing()
+        .then((data) => {
+          const response = data.trim();
+          // Trim any leading/trailing spaces
+          if (response === "OK") {
+            this.internetConnection = "Connected";
+          } else {
+            this.internetConnection = "Disconnected";
+          }
+        })
+        .catch((error) => {
+          console.error("Error:", error);
+          this.internetConnection = "Disconnected";
+        });
+
+      this.lastUpdate = new Date().toLocaleString();
+      console.log("Refreshed");
+    }, this.refreshRate * 1000);
+  },
+};
+}

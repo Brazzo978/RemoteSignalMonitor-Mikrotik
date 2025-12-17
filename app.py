@@ -101,7 +101,7 @@ HTML_PAGE = """
       <label>Interfaccia LTE
         <input name="interface" required placeholder="lte1" />
       </label>
-      <button type="submit">Prova connessione</button>
+      <button type="button" id="connect-button">Prova connessione</button>
       <div id="status"></div>
     </form>
 
@@ -123,6 +123,7 @@ HTML_PAGE = """
       const commandInput = document.getElementById('command-input');
       const sendButton = document.getElementById('send-button');
       const disconnectButton = document.getElementById('disconnect-button');
+      const connectButton = document.getElementById('connect-button');
       let sessionToken = null;
 
       function appendTerminal(text) {
@@ -130,7 +131,7 @@ HTML_PAGE = """
         terminal.scrollTop = terminal.scrollHeight;
       }
 
-      form.addEventListener('submit', async (event) => {
+      async function handleConnect(event) {
         event.preventDefault();
         statusEl.textContent = 'Connessione in corso...';
         const formData = new FormData(form);
@@ -156,7 +157,10 @@ HTML_PAGE = """
           console.error(error);
           statusEl.textContent = 'Errore durante la connessione.';
         }
-      });
+      }
+
+      form.addEventListener('submit', handleConnect);
+      connectButton.addEventListener('click', handleConnect);
 
       sendButton.addEventListener('click', async () => {
         if (!sessionToken) return;

@@ -85,6 +85,16 @@ HTML_PAGE = """
   <body>
     <h1>Remote LTE AT Chat</h1>
     <p>Inserisci i dettagli di connessione SSH per il modem MikroTik e prova a stabilire la sessione.</p>
+    <div class="panel" style="margin-bottom: 1rem;">
+      <h2>Come testare</h2>
+      <ol>
+        <li>Avvia il server Flask (di default sulla porta 5000) e apri la pagina nel browser.</li>
+        <li>Compila i campi Host, Username, Password, Porta e Interfaccia LTE.</li>
+        <li>Clicca su <strong>Prova connessione</strong>.</li>
+        <li>Se la connessione va a buon fine, comparirà il riquadro "Terminale AT" con il risultato del comando iniziale.</li>
+        <li>Digita i comandi AT nel campo dedicato e premi <strong>Invia</strong>; usa <strong>Disconnetti</strong> per chiudere la sessione.</li>
+      </ol>
+    </div>
     <form id="connection-form">
       <label>Indirizzo IP / Host
         <input name="host" required placeholder="192.168.88.1" />
@@ -101,7 +111,7 @@ HTML_PAGE = """
       <label>Interfaccia LTE
         <input name="interface" required placeholder="lte1" />
       </label>
-      <button type="submit">Prova connessione</button>
+      <button type="button" id="connect-button">Prova connessione</button>
       <div id="status"></div>
     </form>
 
@@ -123,6 +133,7 @@ HTML_PAGE = """
       const commandInput = document.getElementById('command-input');
       const sendButton = document.getElementById('send-button');
       const disconnectButton = document.getElementById('disconnect-button');
+      const connectButton = document.getElementById('connect-button');
       let sessionToken = null;
 
       function appendTerminal(text) {
@@ -130,7 +141,7 @@ HTML_PAGE = """
         terminal.scrollTop = terminal.scrollHeight;
       }
 
-      form.addEventListener('submit', async (event) => {
+      async function handleConnect(event) {
         event.preventDefault();
         statusEl.textContent = 'Connessione in corso...';
         const formData = new FormData(form);
@@ -156,7 +167,10 @@ HTML_PAGE = """
           console.error(error);
           statusEl.textContent = 'Errore durante la connessione.';
         }
-      });
+      }
+
+      form.addEventListener('submit', handleConnect);
+      connectButton.addEventListener('click', handleConnect);
 
       sendButton.addEventListener('click', async () => {
         if (!sessionToken) return;

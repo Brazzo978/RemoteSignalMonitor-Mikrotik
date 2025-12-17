@@ -677,6 +677,13 @@ HTML_PAGE = """<!doctype html>
             wrapper.appendChild(meta);
           }
 
+          if (detail.tx_power) {
+            const tx = document.createElement('div');
+            tx.className = 'text-muted small';
+            tx.textContent = `Potenza TX: ${detail.tx_power}`;
+            wrapper.appendChild(tx);
+          }
+
           (detail.metrics || []).forEach(metric => {
             const pct = percentageCalculators[metric.key] ? percentageCalculators[metric.key](parseFloat(metric.value)) : 0;
             const block = document.createElement('div');
@@ -862,6 +869,7 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
             "channel": entry.get("channel") or "-",
             "pci": entry.get("pci") or "-",
             "rx_diversity": entry.get("rx_diversity") or "",
+            "tx_power": f"{_round_value(entry.get('tx_power'))} dBm" if entry.get("tx_power") is not None else "",
             "metrics": [],
             "antennas": entry.get("antennas") or [],
         }
@@ -888,6 +896,8 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
     advanced_entries = []
     pending_lte_antennas = []
     pending_lte_diversity: Optional[str] = None
+    pending_lte_tx_power: Optional[float] = None
+    pending_nr_tx_power: Optional[float] = None
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -917,6 +927,14 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
                 pending_lte_diversity = diversity.group(1)
             continue
 
+        if line.startswith("lte_tx_pwr"):
+            pending_lte_tx_power = _extract_first_float(line)
+            continue
+
+        if line.startswith("nr_tx_pwr"):
+            pending_nr_tx_power = _extract_first_float(line)
+            continue
+
         if line.startswith("pcell:"):
             _finalize_entry(current_entry, advanced_entries)
             current_entry = {
@@ -932,9 +950,11 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
                 "snr": None,
                 "antennas": pending_lte_antennas,
                 "rx_diversity": pending_lte_diversity,
+                "tx_power": pending_lte_tx_power,
             }
             pending_lte_antennas = []
             pending_lte_diversity = None
+            pending_lte_tx_power = None
             band_match = re.search(r"lte_band:(\d+)", line, re.IGNORECASE)
             bw_match = re.search(r"lte_band_width:([^\s]+)", line, re.IGNORECASE)
             if band_match:
@@ -962,6 +982,7 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
                 "snr": None,
                 "antennas": [],
                 "rx_diversity": None,
+                "tx_power": None,
             }
             band_match = re.search(r"lte_band:(\d+)", line, re.IGNORECASE)
             bw_match = re.search(r"lte_band_width:([^\s]+)", line, re.IGNORECASE)
@@ -988,7 +1009,9 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
                 "snr": None,
                 "antennas": [],
                 "rx_diversity": None,
+                "tx_power": pending_nr_tx_power,
             }
+            pending_nr_tx_power = None
             band_match = re.search(r"nr_band:([^\s]+)", line, re.IGNORECASE)
             if band_match:
                 current_entry["band"] = band_match.group(1)

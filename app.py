@@ -339,8 +339,6 @@ HTML_PAGE = """<!doctype html>
             </div>
 
             <div id="bands-status" class="alert alert-info d-none mt-3"></div>
-            <pre id="bands-raw" class="bg-dim p-2 small rounded d-none" style="max-height: 220px; overflow:auto;"></pre>
-
             <div id="bands-container" class="row g-3 mt-3">
               <div class="col-12">
                 <div class="bg-white rounded border p-3 text-muted small">
@@ -348,6 +346,7 @@ HTML_PAGE = """<!doctype html>
                 </div>
               </div>
             </div>
+            <pre id="bands-raw" class="bg-dim p-2 small rounded d-none mt-3" style="max-height: 220px; overflow:auto;"></pre>
           </div>
 
           <div class="tab-pane" data-tab="info">

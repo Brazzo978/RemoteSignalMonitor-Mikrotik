@@ -184,9 +184,23 @@ HTML_PAGE = """<!doctype html>
               </div>
               <div class="d-flex gap-2">
                 <button id="refresh-button" class="btn btn-outline-primary btn-sm">Aggiorna</button>
-                <div class="form-check form-switch">
-                  <input class="form-check-input" type="checkbox" id="auto-refresh" />
-                  <label class="form-check-label" for="auto-refresh">Auto 10s</label>
+                <div class="input-group input-group-sm" style="min-width: 180px;">
+                  <span class="input-group-text">
+                    <div class="form-check form-switch m-0">
+                      <input class="form-check-input" type="checkbox" id="auto-refresh" checked />
+                    </div>
+                    <label class="form-check-label ms-2" for="auto-refresh">Auto</label>
+                  </span>
+                  <input
+                    class="form-control"
+                    type="number"
+                    id="auto-refresh-interval"
+                    min="3"
+                    max="60"
+                    value="3"
+                    aria-label="Intervallo auto refresh in secondi"
+                  />
+                  <span class="input-group-text">s</span>
                 </div>
               </div>
             </div>
@@ -327,6 +341,7 @@ HTML_PAGE = """<!doctype html>
       const connectionBadge = document.getElementById('connection-badge');
       const refreshButton = document.getElementById('refresh-button');
       const autoRefresh = document.getElementById('auto-refresh');
+      const autoRefreshInterval = document.getElementById('auto-refresh-interval');
       const rawDebug = document.getElementById('raw-debug');
       const mainTabs = document.getElementById('main-tabs');
       const advancedContainer = document.getElementById('advanced-container');
@@ -459,7 +474,10 @@ HTML_PAGE = """<!doctype html>
           appendTerminal('=== Sessione pronta (comandi via /interface lte at-chat) ===');
           appendTerminal((data.preview || '').trim() || '(nessun output)');
           commandInput.focus();
+          autoRefresh.checked = true;
+          enforceIntervalBounds();
           await fetchSignals();
+          syncAutoRefreshState();
         } catch (error) {
           log('ERRORE durante fetch: ' + error.message);
           console.error('Errore completo:', error);
@@ -537,18 +555,44 @@ HTML_PAGE = """<!doctype html>
       });
 
       refreshButton.addEventListener('click', fetchSignals);
-      autoRefresh.addEventListener('change', function() {
+      autoRefresh.addEventListener('change', syncAutoRefreshState);
+      autoRefreshInterval.addEventListener('change', () => {
+        enforceIntervalBounds();
+        syncAutoRefreshState();
+      });
+
+      function enforceIntervalBounds() {
+        const value = Number(autoRefreshInterval.value);
+        if (Number.isNaN(value) || value < 3) {
+          autoRefreshInterval.value = 3;
+        } else if (value > 60) {
+          autoRefreshInterval.value = 60;
+        } else {
+          autoRefreshInterval.value = Math.round(value);
+        }
+      }
+
+      function syncAutoRefreshState() {
         if (!sessionToken) {
           autoRefresh.checked = false;
+          if (autoTimer) {
+            clearInterval(autoTimer);
+            autoTimer = null;
+          }
           return;
         }
-        if (autoRefresh.checked) {
-          autoTimer = setInterval(fetchSignals, 10000);
-        } else if (autoTimer) {
+
+        if (autoTimer) {
           clearInterval(autoTimer);
           autoTimer = null;
         }
-      });
+
+        if (autoRefresh.checked) {
+          enforceIntervalBounds();
+          const intervalMs = Number(autoRefreshInterval.value) * 1000;
+          autoTimer = setInterval(fetchSignals, intervalMs);
+        }
+      }
 
       async function fetchSignals() {
         if (!sessionToken) return;

@@ -629,7 +629,7 @@ HTML_PAGE = """<!doctype html>
         document.getElementById('network-provider').textContent = parsed.operator || '-';
         document.getElementById('mccmnc').textContent = parsed.mccmnc || '-';
         document.getElementById('bands').textContent = parsed.bands || '-';
-        document.getElementById('earfcn').textContent = parsed.channel || '-';
+        document.getElementById('earfcn').textContent = parsed.channels || parsed.channel || '-';
         document.getElementById('pci').textContent = parsed.pci || '-';
         document.getElementById('cell-id').textContent = parsed.cell_id || '-';
         document.getElementById('tac').textContent = parsed.tac || '-';
@@ -795,6 +795,7 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
         "mccmnc": "-",
         "bands": "-",
         "channel": "-",
+        "channels": "-",
         "pci": "-",
         "cell_id": "-",
         "tac": "-",
@@ -1172,6 +1173,30 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
         return " + ".join(ordered_bands) if ordered_bands else "-"
 
     info["bands"] = _build_band_display(advanced_entries)
+
+    def _build_channel_display(entries: list) -> str:
+        channels = []
+
+        for entry in entries:
+            channel = entry.get("channel")
+            if not channel:
+                continue
+
+            normalized_band = entry.get("band")
+            technology = entry.get("technology")
+
+            if technology == "NR" and normalized_band and not str(normalized_band).lower().startswith("n"):
+                normalized_band = f"n{normalized_band}"
+
+            label = str(channel).strip()
+            if normalized_band:
+                label = f"{label} ({normalized_band})"
+
+            channels.append(label)
+
+        return " + ".join(channels) if channels else "-"
+
+    info["channels"] = _build_channel_display(advanced_entries)
 
     return info
 

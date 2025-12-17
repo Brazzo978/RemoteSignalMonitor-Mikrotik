@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Simple T99</title>
+    <!-- Import all the bootstrap css files from css folder -->
+    <link rel="stylesheet" href="css/styles.css" />
+    <link rel="stylesheet" href="css/bootstrap.min.css" />
+
+    <!-- Logo -->
+    <link rel="simpleadmin-logo" href="favicon.ico" />
+
+    <!--  Import BootStrap Javascript -->
+    <script src="js/auth.js" defer></script>
+    <script src="js/bootstrap.bundle.min.js"></script>
+    <script src="js/alpinejs.min.js" defer></script>
+    <script src="js/esim-config.js" defer></script>
+    <script src="js/index-esim.js" defer></script>
+    <script src="js/index-process.js"></script>
+    <script src="js/atcommand-utils.js"></script>
+    <script src="js/dark-mode.js"></script>    
+  </head>
+  <body data-require-auth="true">
+    <main>
+      <div class="container my-4" x-data="processAllInfos()">
+        <nav class="navbar navbar-expand-lg mt-2">
+          <div class="container-fluid">
+            <a class="navbar-brand" href="/"
+              ><span class="mb-0 h4">Simple T99</span></a
+            >
+            <button
+              class="navbar-toggler"
+              type="button"
+              data-bs-toggle="collapse"
+              data-bs-target="#navbarText"
+              aria-controls="navbarText"
+              aria-expanded="false"
+              aria-label="Toggle navigation"
+              data-allow-user="true"
+            >
+              <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarText">
+              <ul class="navbar-nav me-auto mb-2 mb-lg-0">
+                <li class="nav-item">
+                  <a class="nav-link active" aria-current="page" href="/"
+                    >Home</a
+                  >
+                </li>
+                <li class="nav-item">
+                  <a class="nav-link" href="network.html">4G/5G Settings</a>
+                </li>
+                <li class="nav-item">
+                  <a class="nav-link" href="/network-settings.html">Network Settings</a>
+                </li>
+                <li class="nav-item">
+                  <a class="nav-link" href="/settings.html">AT Terminal</a>
+                </li>
+                <li class="nav-item">
+                  <a class="nav-link" href="/sms.html">SMS</a>
+                </li>
+                <li class="nav-item">
+                  <a class="nav-link" href="deviceinfo.html">Device Information</a>
+                </li>
+                <li class="nav-item" id="esimNavItem" style="display: none;">
+                  <a class="nav-link" href="/esim.html">eSIM</a>
+                </li>                
+              </ul>
+              <div
+                class="navbar-text d-flex align-items-center gap-3 flex-wrap justify-content-end"
+              >
+                <span
+                  class="badge rounded-pill fw-semibold text-uppercase d-none"
+                  id="navUserRole"
+                ></span>
+                <span class="fw-semibold" id="navUserName"></span>
+                <button
+                  class="btn btn-outline-secondary btn-sm"
+                  id="logoutButton"
+                  type="button"
+                >
+                  Logout
+                </button>
+              </div>
+            </div>
+          </div>
+        </nav>
+
+        <div class="row align-items-center mt-5 gap-md-3 gap-2">
+          <div class="col align-self-center">
+            <div class="card">
+              <div
+                class="card-body d-flex flex-column align-items-center justify-content-center"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 320 512"
+                  height="85"
+                  width="85"
+                >
+                  <path
+                    fill="#fdb53c"
+                    d="M160 64c-26.5 0-48 21.5-48 48V276.5c0 17.3-7.1 31.9-15.3 42.5C86.2 332.6 80 349.5 80 368c0 44.2 35.8 80 80 80s80-35.8 80-80c0-18.5-6.2-35.4-16.7-48.9c-8.2-10.6-15.3-25.2-15.3-42.5V112c0-26.5-21.5-48-48-48zM48 112C48 50.2 98.1 0 160 0s112 50.1 112 112V276.5c0 .1 .1 .3 .2 .6c.2 .6 .8 1.6 1.7 2.8c18.9 24.4 30.1 55 30.1 88.1c0 79.5-64.5 144-144 144S16 447.5 16 368c0-33.2 11.2-63.8 30.1-88.1c.9-1.2 1.5-2.2 1.7-2.8c.1-.3 .2-.5 .2-.6V112zM208 368c0 26.5-21.5 48-48 48s-48-21.5-48-48c0-20.9 13.4-38.7 32-45.3V272c0-8.8 7.2-16 16-16s16 7.2 16 16v50.7c18.6 6.6 32 24.4 32 45.3z"
+                  />
+                </svg>
+                <h1
+                  class="card-text mt-4"
+                  x-text="temperature.replace('C', '') + '&deg;C'"
+                ></h1>
+              </div>
+              <div class="card-footer">Temperature</div>
+            </div>
+          </div>
+
+          <div class="col align-self-center">
+            <div class="card">
+              <div
+                class="card-body d-flex flex-column align-items-center justify-content-center"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 384 512"
+                  height="85"
+                  width="85"
+                >
+                  <path
+                    fill="#6a46d8"
+                    d="M64 0H242.7c17 0 33.3 6.7 45.3 18.7L365.3 96c12 12 18.7 28.3 18.7 45.3V448c0 35.3-28.7 64-64 64H64c-35.3 0-64-28.7-64-64V64C0 28.7 28.7 0 64 0zM96 192c-17.7 0-32 14.3-32 32v32h64V192H96zM64 352h80 96 80V288H240 144 64v64zM320 224c0-17.7-14.3-32-32-32H256v64h64V224zM160 192v64h64V192H160zM288 448c17.7 0 32-14.3 32-32V384H256v64h32zM160 384v64h64V384H160zM64 416c0 17.7 14.3 32 32 32h32V384H64v32z"
+                  />
+                </svg>
+                <h1 class="card-text mt-4" x-text="simStatus"></h1>
+              </div>
+              <div class="card-footer">SIM Status</div>
+            </div>
+          </div>
+
+          <div class="col align-self-center">
+            <div class="card">
+              <div
+                class="card-body d-flex flex-column align-items-center justify-content-center"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 640 512"
+                  height="85"
+                  width="85"
+                >
+                  <path
+                    fill="#2fa7fb"
+                    d="M576 0c17.7 0 32 14.3 32 32V480c0 17.7-14.3 32-32 32s-32-14.3-32-32V32c0-17.7 14.3-32 32-32zM448 96c17.7 0 32 14.3 32 32V480c0 17.7-14.3 32-32 32s-32-14.3-32-32V128c0-17.7 14.3-32 32-32zM352 224V480c0 17.7-14.3 32-32 32s-32-14.3-32-32V224c0-17.7 14.3-32 32-32s32 14.3 32 32zM192 288c17.7 0 32 14.3 32 32V480c0 17.7-14.3 32-32 32s-32-14.3-32-32V320c0-17.7 14.3-32 32-32zM96 416v64c0 17.7-14.3 32-32 32s-32-14.3-32-32V416c0-17.7 14.3-32 32-32s32 14.3 32 32z"
+                  />
+                </svg>
+                <h1 class="card-text mt-4" x-text="signalPercentage + '%'"></h1>
+              </div>
+              <div class="card-footer">Signal Percentage</div>
+            </div>
+          </div>
+
+          <div class="col align-self-center">
+            <div class="card">
+              <div
+                class="card-body d-flex flex-column align-items-center justify-content-center"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 640 512"
+                  height="85"
+                  width="85"
+                >
+                  <path
+                    fill="#20c0ae"
+                    d="M0 336c0 79.5 64.5 144 144 144H512c70.7 0 128-57.3 128-128c0-61.9-44-113.6-102.4-125.4c4.1-10.7 6.4-22.4 6.4-34.6c0-53-43-96-96-96c-19.7 0-38.1 6-53.3 16.2C367 64.2 315.3 32 256 32C167.6 32 96 103.6 96 192c0 2.7 .1 5.4 .2 8.1C40.2 219.8 0 273.2 0 336z"
+                  />
+                </svg>
+                <h1
+                  class="card-text mt-4"
+                  x-text="internetConnectionStatus"
+                ></h1>
+              </div>
+              <div class="card-footer">Internet Connection</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row mt-5 gap-3">
+          <div class="col">
+            <div class="card">
+              <div class="card-header">Network Information</div>
+              <div class="card-body">
+                <div class="card-text table-responsive-sm">
+                  <table class="table">
+                    <tbody>
+                      <tr>
+                        <th scope="row">Active Sim</th>
+                        <td x-text="activeSim"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">Network Provider</th>
+                        <td x-text="networkProvider"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">MCCMNC</th>
+                        <td x-text="mccmnc"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">APN</th>
+                        <td x-text="apn"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">IPv<sup>4</sup></th>
+                        <td x-text="ipv4"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">IPv<sup>6</sup></th>
+                        <td x-text="ipv6"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">Uptime</th>
+                        <td x-text="uptime"></td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div class="card-footer">
+                <div class="row row-cols-2">
+                  <div class="col">
+                    <p class="btn">Refresh Rate (min 3s)</p>
+                  </div>
+                  <div class="col">
+                    <div class="input-group">
+                      <input
+                        x-model="newRefreshRate"
+                        class="form-control"
+                        type="number"
+                        min="3"
+                        max="60"
+                        x-bind:placeholder="refreshRate + 's'"
+                        data-requires-admin
+                      />
+                      <button
+                        @click="updateRefreshRate()"
+                        class="btn btn-outline-secondary"
+                        type="button"
+                        data-requires-admin
+                      >
+                        Set
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="col">
+            <div class="card">
+              <div class="card-header">Signal Information</div>
+              <div class="card-body">
+                <div class="card-text table-responsive-sm">
+                  <table class="table">
+                    <tbody>
+                      <tr>
+                        <th scope="row">Assessment</th>
+                        <td x-text="signalAssessment"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">Network Mode</th>
+                        <td x-text="networkMode"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">Bands</th>
+                        <td x-text="bands"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">Bandwidth</th>
+                        <td x-text="bandwidth"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">E/ARFCN<sup>4G/5G</sup></th>
+                        <td x-text="earfcns"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">PCI</th>
+                        <td
+                          x-show="sccPCI != '-'"
+                          x-text="pccPCI + ', ' + sccPCI"
+                        ></td>
+                        <td x-show="sccPCI == '-'" x-text="pccPCI"></td>
+                      </tr>
+                      <tr x-show="csq != 'NR-SA Mode'">
+                        <th scope="row">CSQ</th>
+                        <td x-show="csq != '-'" x-text="csq"></td>
+                        <td x-show="csq == '-'" class="fst-italic">None</td>
+                      </tr>
+                      <tr>
+                        <th scope="row">CELL ID</th>
+                        <td x-text="cellID"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">eNB ID <sup>4G/5G</sup></th>
+                        <td x-text="eNBID"></td>
+                      </tr>
+                      <tr>
+                        <th scope="row">TAC<sup>4G/5G</sup></th>
+                        <td x-text="tac"></td>
+                      </tr>
+                      <tr x-show="rsrqLTE != '-'">
+                        <th scope="row">SS_RSRQ<sup>4G</sup></th>
+                        <td
+                          class="gap-4 align-items-center"
+                          x-data="{ getProgressBarClass: function() {
+                          // Remove the percentage sign and convert to integer
+                          var percentage = parseInt(this.rsrqLTEPercentage);
+
+                          if (percentage >= 60) {
+                              return 'progress-bar bg-success is-medium';
+                          } else if (percentage >= 40) {
+                              return 'progress-bar bg-warning is-warning is-medium';
+                          } else {
+                              return 'progress-bar bg-danger is-medium';
+                          }
+                      } }"
+                        >
+                          <div
+                            x-show="rsrqLTE != '-' && rsrqLTEPercentage != '0'"
+                            class="progress w-100"
+                            role="progressbar"
+                            aria-label="RSRQ BAR"
+                            :aria-valuenow="rsrqLTEPercentage"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            style="height: 18px"
+                          >
+                            <div
+                              :class="getProgressBarClass()"
+                              :style="'width: ' + rsrqLTEPercentage + '%'"
+                            >
+                              <span
+                                x-text="rsrqLTE + ' / ' +  rsrqLTEPercentage + '%'"
+                              ></span>
+                            </div>
+                          </div>
+                          <span
+                            x-show="rsrqLTEPercentage == '0'"
+                            x-text="rsrqLTE"
+                          ></span>
+                          <span x-show="rsrqLTE == '-'" class="fst-italic">
+                            None
+                          </span>
+                        </td>
+                      </tr>
+                      <tr x-show="rsrpLTE != '-'">
+                        <th scope="row">RSRP<sup>4G</sup></th>
+                        <td
+                          class="gap-4 align-items-center"
+                          x-data="{
+                          getProgressBarClass: function() {
+                              // Remove the percentage sign and convert to integer
+                              var percentage = parseInt(this.rsrpLTEPercentage);
+
+                              if (percentage >= 60) {
+                                  return 'progress-bar bg-success is-medium';
+                              } else if (percentage >= 40) {
+                                  return 'progress-bar bg-warning is-warning is-medium';
+                              } else {
+                                  return 'progress-bar bg-danger is-medium';
+                              }
+                          }
+                        }"
+                        >
+                          <div
+                            x-show="rsrpLTE != '-' && rsrpLTEPercentage != '0'"
+                            class="progress w-100"
+                            role="progressbar"
+                            aria-label="RSRP BAR"
+                            :aria-valuenow="rsrpLTEPercentage"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            style="height: 18px"
+                          >
+                            <div
+                              :class="getProgressBarClass()"
+                              :style="'width: ' + rsrpLTEPercentage + '%'"
+                            >
+                              <span
+                                x-text="rsrpLTE + ' / ' + rsrpLTEPercentage + '%'"
+                              ></span>
+                            </div>
+                          </div>
+                          <span
+                            x-show="rsrpLTEPercentage == '0'"
+                            x-text="rsrpLTE"
+                          ></span>
+                          <span x-show="rsrpLTE == '-'" class="fst-italic">
+                            None
+                          </span>
+                        </td>
+                      </tr>
+                      <tr x-show="rssiLTE != '-'">
+                        <th scope="row">RSSI<sup>4G</sup></th>
+                        <td
+                          class="gap-4 align-items-center"
+                          x-data="{
+                          getProgressBarClass: function() {
+                              var percentage = parseInt(this.rssiLTEPercentage);
+
+                              if (percentage >= 60) {
+                                  return 'progress-bar bg-success is-medium';
+                              } else if (percentage >= 40) {
+                                  return 'progress-bar bg-warning is-warning is-medium';
+                              } else {
+                                  return 'progress-bar bg-danger is-medium';
+                              }
+                          }
+                        }"
+                        >
+                          <div
+                            x-show="rssiLTE != '-' && rssiLTEPercentage != '0'"
+                            class="progress w-100"
+                            role="progressbar"
+                            aria-label="RSSI BAR"
+                            :aria-valuenow="rssiLTEPercentage"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            style="height: 18px"
+                          >
+                            <div
+                              :class="getProgressBarClass()"
+                              :style="'width: ' + rssiLTEPercentage + '%'"
+                            >
+                              <span
+                                x-text="rssiLTE + ' / ' + rssiLTEPercentage + '%'"
+                              ></span>
+                            </div>
+                          </div>
+                          <span
+                            x-show="rssiLTEPercentage == '0'"
+                            x-text="rssiLTE"
+                          ></span>
+                          <span x-show="rssiLTE == '-'" class="fst-italic">
+                            None
+                          </span>
+                        </td>
+                      </tr>
+                      <tr x-show="sinrLTE != '-'">
+                        <th scope="row">SINR<sup>4G</sup></th>
+                        <td
+                          class="gap-4 align-items-center"
+                          x-data="{
+                          getProgressBarClass: function() {
+                              // Remove the percentage sign and convert to integer
+                              var percentage = parseInt(this.sinrLTEPercentage);
+
+                              if (percentage >= 60) {
+                                  return 'progress-bar bg-success is-medium';
+                              } else if (percentage >= 40) {
+                                  return 'progress-bar bg-warning is-warning is-medium';
+                              } else {
+                                  return 'progress-bar bg-danger is-medium';
+                              }
+                          }
+                        }"
+                        >
+                          <div
+                            x-show="sinrLTE != '-' && sinrLTEPercentage != '0'"
+                            class="progress w-100"
+                            role="progressbar"
+                            aria-label="SINR BAR"
+                            :aria-valuenow="sinrLTEPercentage"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            style="height: 18px"
+                          >
+                            <div
+                              :class="getProgressBarClass()"
+                              :style="'width: ' + sinrLTEPercentage +'%'"
+                            >
+                              <span
+                                x-text="sinrLTE + ' / ' + sinrLTEPercentage +'%'"
+                              ></span>
+                            </div>
+                          </div>
+                          <span
+                            x-text="sinrLTE"
+                            x-show="sinrLTEPercentage == '0'"
+                          ></span>
+                          <span x-show="sinrLTE == '-'" class="fst-italic">
+                            None
+                          </span>
+                        </td>
+                      </tr>
+                      <tr x-show="rsrqNR != '-'">
+                        <th scope="row">SS_RSRQ<sup>5G</sup></th>
+                        <td
+                          x-data="{ getProgressBarClass: function() {
+                          // Remove the percentage sign and convert to integer
+                          var percentage = parseInt(this.rsrqNRPercentage);
+
+                          if (percentage >= 60) {
+                              return 'progress-bar bg-success is-medium';
+                          } else if (percentage >= 40) {
+                              return 'progress-bar bg-warning is-warning is-medium';
+                          } else {
+                              return 'progress-bar bg-danger is-medium';
+                          }
+                      } }"
+                        >
+                          <div
+                            x-show="rsrqNR != '-' && rsrqNRPercentage != '0'"
+                            class="progress w-100"
+                            role="progressbar"
+                            aria-label="RSRQ BAR"
+                            :aria-valuenow="rsrqNRPercentage"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            style="height: 18px"
+                          >
+                            <div
+                              :class="getProgressBarClass()"
+                              :style="'width: ' + rsrqNRPercentage + '%'"
+                            >
+                              <span
+                                x-text="rsrqNR + ' / ' + rsrqNRPercentage + '%'"
+                              ></span>
+                            </div>
+                          </div>
+                          <span
+                            x-show="rsrqNRPercentage == '0'"
+                            x-text="rsrqNR"
+                          ></span>
+                          <span x-show="rsrqNR == '-'" class="fst-italic">
+                            None
+                          </span>
+                        </td>
+                      </tr>
+                      <tr x-show="rsrpNR != '-'">
+                        <th scope="row">SS_RSRP<sup>5G</sup></th>
+                        <td
+                          class="gap-4 align-items-center"
+                          x-data="{
+                          getProgressBarClass: function() {
+                              // Remove the percentage sign and convert to integer
+                              var percentage = parseInt(this.rsrpNRPercentage);
+
+                              if (percentage >= 60) {
+                                  return 'progress-bar bg-success is-medium';
+                              } else if (percentage >= 40) {
+                                  return 'progress-bar bg-warning is-warning is-medium';
+                              } else {
+                                  return 'progress-bar bg-danger is-medium';
+                              }
+                          }
+                        }"
+                        >
+                          <div
+                            x-show="rsrpNR != '-' && rsrpNRPercentage != '0'"
+                            class="progress w-100"
+                            role="progressbar"
+                            aria-label="RSRP BAR"
+                            :aria-valuenow="rsrpNRPercentage"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            style="height: 18px"
+                          >
+                            <div
+                              :class="getProgressBarClass()"
+                              :style="'width: ' + rsrpNRPercentage + '%'"
+                            >
+                              <span
+                                x-text="rsrpNR + ' / ' + rsrpNRPercentage + '%'"
+                              ></span>
+                            </div>
+                          </div>
+                          <span
+                            x-show="rsrpNRPercentage == '0'"
+                            x-text="rsrpNR"
+                          ></span>
+                          <span x-show="rsrpNR == '-'" class="fst-italic">
+                            None
+                          </span>
+                        </td>
+                      </tr>
+                      <tr x-show="rssiNR != '-'">
+                        <th scope="row">RSSI<sup>5G</sup></th>
+                        <td
+                          class="gap-4 align-items-center"
+                          x-data="{
+                          getProgressBarClass: function() {
+                              var percentage = parseInt(this.rssiNRPercentage);
+
+                              if (percentage >= 60) {
+                                  return 'progress-bar bg-success is-medium';
+                              } else if (percentage >= 40) {
+                                  return 'progress-bar bg-warning is-warning is-medium';
+                              } else {
+                                  return 'progress-bar bg-danger is-medium';
+                              }
+                          }
+                        }"
+                        >
+                          <div
+                            x-show="rssiNR != '-' && rssiNRPercentage != '0'"
+                            class="progress w-100"
+                            role="progressbar"
+                            aria-label="RSSI BAR"
+                            :aria-valuenow="rssiNRPercentage"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            style="height: 18px"
+                          >
+                            <div
+                              :class="getProgressBarClass()"
+                              :style="'width: ' + rssiNRPercentage + '%'"
+                            >
+                              <span
+                                x-text="rssiNR + ' / ' + rssiNRPercentage + '%'"
+                              ></span>
+                            </div>
+                          </div>
+                          <span
+                            x-show="rssiNRPercentage == '0'"
+                            x-text="rssiNR"
+                          ></span>
+                          <span x-show="rssiNR == '-'" class="fst-italic">
+                            None
+                          </span>
+                        </td>
+                      </tr>
+                      <tr x-show="sinrNR != '-'">
+                        <th scope="row">SINR<sup>5G</sup></th>
+                        <td
+                          class="gap-4 align-items-center"
+                          x-data="{
+                          getProgressBarClass: function() {
+                              // Remove the percentage sign and convert to integer
+                              var percentage = parseInt(this.sinrNRPercentage);
+
+                              if (percentage >= 60) {
+                                  return 'progress-bar bg-success is-medium';
+                              } else if (percentage >= 40) {
+                                  return 'progress-bar bg-warning is-warning is-medium';
+                              } else {
+                                  return 'progress-bar bg-danger is-medium';
+                              }
+                          }
+                        }"
+                        >
+                          <div
+                            x-show="sinrNR != '-' && sinrNRPercentage != '0'"
+                            class="progress w-100"
+                            role="progressbar"
+                            aria-label="SINR BAR"
+                            :aria-valuenow="sinrNRPercentage"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            style="height: 18px"
+                          >
+                            <div
+                              :class="getProgressBarClass()"
+                              :style="'width: ' + sinrNRPercentage +'%'"
+                            >
+                              <span
+                                x-text="sinrNR + ' / ' + sinrNRPercentage +'%'"
+                              ></span>
+                            </div>
+                          </div>
+                          <span
+                            x-text="sinrNR"
+                            x-show="sinrNRPercentage == '0'"
+                          ></span>
+                          <span x-show="sinrNR == '-'" class="fst-italic">
+                            None
+                          </span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="row mt-4">
+          <div class="col-12">
+            <div class="card">
+              <div
+                class="card-header d-flex justify-content-between align-items-center"
+              >
+                <span>Advanced Signal Details</span>
+                <button
+                  class="btn btn-sm btn-outline-primary"
+                  type="button"
+                  data-bs-toggle="collapse"
+                  data-bs-target="#advancedSignalCollapse"
+                  aria-expanded="false"
+                  aria-controls="advancedSignalCollapse"
+                >
+                  Show details
+                </button>
+              </div>
+              <div id="advancedSignalCollapse" class="collapse">
+                <div class="card-body">
+                  <template x-if="detailedSignals.length === 0">
+                    <p class="mb-0 text-muted">
+                      No advanced details available.
+                    </p>
+                  </template>
+
+                  <template x-for="(entry, index) in detailedSignals" :key="entry.id ?? index">
+                    <div
+                      class="mb-4 pb-3 border-bottom"
+                      :class="{ 'border-0 pb-0 mb-0': index === detailedSignals.length - 1 }"
+                    >
+                      <div
+                        class="d-flex flex-column flex-md-row justify-content-between align-items-md-start gap-2"
+                      >
+                        <div>
+                          <h5 class="mb-1" x-text="entry.title"></h5>
+                          <p class="mb-0 text-muted">
+                            <span x-text="'Technology: ' + entry.technology"></span>
+                            <span class="ms-3" x-text="'Band: ' + entry.bandDisplay"></span>
+                          </p>
+                        </div>
+                        <div class="text-md-end text-muted small">
+                          <div x-text="'PCI: ' + entry.pciDisplay"></div>
+                          <div x-text="'Channel: ' + entry.channelDisplay"></div>
+                        </div>
+                      </div>
+
+                      <div class="row small text-muted mt-2">
+                        <div class="col-md-6">
+                          <p class="mb-1" x-text="'Bandwidth: ' + entry.bandwidthDisplay"></p>
+                        </div>
+                        <div class="col-md-6 text-md-end" x-show="entry.rxDiversityDisplay">
+                          <p class="mb-1" x-text="'RX Diversity: ' + entry.rxDiversityDisplay"></p>
+                        </div>
+                      </div>
+
+                      <div class="mt-3">
+                        <template x-for="metric in entry.metrics" :key="metric.key">
+                          <div class="mb-3">
+                            <div class="d-flex justify-content-between">
+                              <span class="fw-semibold" x-text="metric.label"></span>
+                              <span x-text="metric.display"></span>
+                            </div>
+                            <template x-if="metric.percentage > 0">
+                              <div
+                                class="progress"
+                                style="height: 18px"
+                                role="progressbar"
+                                aria-valuemin="0"
+                                aria-valuemax="100"
+                                :aria-valuenow="metric.percentage"
+                              >
+                                <div
+                                  class="progress-bar"
+                                  :class="getProgressBarClass(metric.percentage)"
+                                  :style="'width: ' + metric.percentage + '%'"
+                                >
+                                  <span
+                                    x-text="metric.display + ' / ' + metric.percentage + '%'"
+                                  ></span>
+                                </div>
+                              </div>
+                            </template>
+                            <template x-if="metric.percentage === 0">
+                              <span class="fst-italic text-muted">Value not available</span>
+                            </template>
+                          </div>
+                        </template>
+                      </div>
+
+                      <template x-if="entry.antennas && entry.antennas.length">
+                        <div class="mt-3">
+                          <h6 class="fw-semibold">RSRP per Antenna</h6>
+                          <template x-for="antenna in entry.antennas" :key="antenna.label">
+                            <div class="mb-2">
+                              <div class="d-flex justify-content-between small">
+                                <span x-text="antenna.label"></span>
+                                <span x-text="antenna.display"></span>
+                              </div>
+                              <template x-if="antenna.percentage > 0">
+                                <div
+                                  class="progress"
+                                  style="height: 12px"
+                                  role="progressbar"
+                                  aria-valuemin="0"
+                                  aria-valuemax="100"
+                                  :aria-valuenow="antenna.percentage"
+                                >
+                                  <div
+                                    class="progress-bar"
+                                    :class="getProgressBarClass(antenna.percentage)"
+                                    :style="'width: ' + antenna.percentage + '%'"
+                                  ></div>
+                                </div>
+                              </template>
+                              <template x-if="antenna.percentage === 0">
+                                <span class="fst-italic text-muted">Value not available</span>
+                              </template>
+                            </div>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+    <footer class="border-top py-3 mt-4">
+      <div class="container d-flex flex-wrap gap-3 justify-content-between align-items-center">
+        <a class="btn btn-outline-secondary btn-sm" href="/credentials.html" data-requires-admin="hide">Credential Management</a>
+        <button class="btn btn-link text-reset" id="darkModeToggle" type="button" data-allow-user="true">Dark Mode</button>
+      </div>
+    </footer>
+  </body>
+</html>

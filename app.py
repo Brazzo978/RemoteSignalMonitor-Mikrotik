@@ -849,7 +849,13 @@ HTML_PAGE = """<!doctype html>
                   <div class="fw-semibold">${label}</div>
                   <div class="text-muted small">${hint || ''}</div>
                 </div>
-                <span class="badge bg-light text-dark">${available.length} bande</span>
+                <div class="d-flex flex-wrap align-items-center gap-2">
+                  <div class="btn-group btn-group-sm" role="group">
+                    <button class="btn btn-outline-secondary" type="button" data-tech-action="select-all" data-tech="${key}">Seleziona tutte</button>
+                    <button class="btn btn-outline-secondary" type="button" data-tech-action="deselect-all" data-tech="${key}">Deseleziona tutte</button>
+                  </div>
+                  <span class="badge bg-light text-dark">${available.length} bande</span>
+                </div>
               </div>
               <div class="d-flex flex-wrap gap-1 align-items-center">
                 ${pills || '<span class="text-muted small">Nessuna banda riportata dal modem.</span>'}
@@ -858,6 +864,19 @@ HTML_PAGE = """<!doctype html>
           bandsContainer.appendChild(col);
         });
       }
+
+      bandsContainer.addEventListener('click', (event) => {
+        const actionButton = event.target.closest('[data-tech-action]');
+        if (!actionButton) return;
+        const techKey = actionButton.getAttribute('data-tech');
+        const action = actionButton.getAttribute('data-tech-action');
+        if (!techKey || !action) return;
+        const checkboxes = bandsContainer.querySelectorAll(`.band-checkbox[data-tech="${techKey}"]`);
+        const shouldSelect = action === 'select-all';
+        checkboxes.forEach(box => {
+          box.checked = shouldSelect;
+        });
+      });
 
       function collectTechSelection(techKey) {
         const checkboxes = bandsContainer.querySelectorAll(`.band-checkbox[data-tech="${techKey}"]`);

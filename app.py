@@ -323,8 +323,27 @@ HTML_PAGE = """<!doctype html>
           </div>
 
           <div class="tab-pane" data-tab="bande">
-            <h5 class="panel-title mb-3">Bande</h5>
-            <p class="text-muted mb-0">Sezione pronta per future letture dedicate alle bande LTE/NR.</p>
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+              <div>
+                <h5 class="panel-title mb-1">Gestione bande</h5>
+                <p class="text-muted mb-0">Leggi e configura le bande disponibili con AT^BAND_PREF_EXT.</p>
+              </div>
+              <div class="d-flex gap-2">
+                <button class="btn btn-outline-secondary btn-sm" id="bands-refresh-button" type="button">Leggi bande</button>
+                <button class="btn btn-primary btn-sm" id="bands-save-button" type="button">Salva modifiche</button>
+              </div>
+            </div>
+
+            <div id="bands-status" class="alert alert-info d-none mt-3"></div>
+            <pre id="bands-raw" class="bg-dim p-2 small rounded d-none" style="max-height: 220px; overflow:auto;"></pre>
+
+            <div id="bands-container" class="row g-3 mt-3">
+              <div class="col-12">
+                <div class="bg-white rounded border p-3 text-muted small">
+                  Connetti il modem e premi "Leggi bande" per visualizzare le bande disponibili per WCDMA, LTE e 5G (NSA/SA).
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="tab-pane" data-tab="info">
@@ -353,8 +372,26 @@ HTML_PAGE = """<!doctype html>
       const mainTabs = document.getElementById('main-tabs');
       const advancedContainer = document.getElementById('advanced-container');
       const advancedPlaceholder = document.getElementById('advanced-placeholder');
+      const bandsContainer = document.getElementById('bands-container');
+      const bandsStatus = document.getElementById('bands-status');
+      const bandsRaw = document.getElementById('bands-raw');
+      const bandsRefreshButton = document.getElementById('bands-refresh-button');
+      const bandsSaveButton = document.getElementById('bands-save-button');
       let sessionToken = null;
       let autoTimer = null;
+      let currentBands = {};
+      const bandTechnologies = [
+        { key: 'WCDMA', label: 'WCDMA', hint: 'Bande 3G' },
+        { key: 'LTE', label: 'LTE', hint: 'Bande 4G' },
+        { key: 'NR5G_NSA', label: 'NR5G NSA', hint: '5G Non-Standalone' },
+        { key: 'NR5G_SA', label: 'NR5G SA', hint: '5G Standalone' },
+      ];
+      const defaultBandsCatalog = {
+        WCDMA: ['1', '2', '4', '5', '6', '8', '9', '19'],
+        LTE: ['1', '2', '3', '4', '5', '7', '8', '12', '13', '14', '17', '18', '19', '20', '25', '26', '28', '29', '30', '32', '34', '38', '39', '40', '41', '42', '43', '46', '48', '66', '71'],
+        NR5G_NSA: ['1', '2', '3', '5', '7', '8', '12', '14', '20', '25', '28', '38', '40', '41', '48', '66', '71', '77', '78', '79', '257', '258', '260', '261'],
+        NR5G_SA: ['1', '2', '3', '5', '7', '8', '12', '20', '25', '28', '38', '40', '41', '48', '66', '71', '77', '78', '79'],
+      };
 
       mainTabs.addEventListener('click', (event) => {
         if (event.target.tagName !== 'BUTTON') return;
@@ -364,6 +401,9 @@ HTML_PAGE = """<!doctype html>
         event.target.classList.add('active');
         const pane = document.querySelector(`.tab-pane[data-tab="${target}"]`);
         if (pane) pane.classList.add('active');
+        if (target === 'bande' && sessionToken && !Object.keys(currentBands).length) {
+          loadBandPreferences(false);
+        }
       });
 
       const percentageCalculators = {
@@ -559,6 +599,7 @@ HTML_PAGE = """<!doctype html>
           autoRefresh.checked = false;
           autoTimer = null;
         }
+        resetBandsUI();
       });
 
       refreshButton.addEventListener('click', fetchSignals);
@@ -567,6 +608,10 @@ HTML_PAGE = """<!doctype html>
         enforceIntervalBounds();
         syncAutoRefreshState();
       });
+      bandsRefreshButton.addEventListener('click', () => loadBandPreferences());
+      bandsSaveButton.addEventListener('click', saveBandPreferences);
+
+      resetBandsUI();
 
       function enforceIntervalBounds() {
         const value = Number(autoRefreshInterval.value);
@@ -598,6 +643,198 @@ HTML_PAGE = """<!doctype html>
           enforceIntervalBounds();
           const intervalMs = Number(autoRefreshInterval.value) * 1000;
           autoTimer = setInterval(fetchSignals, intervalMs);
+        }
+      }
+
+      function setBandsStatus(message, type = 'info') {
+        if (!message) {
+          bandsStatus.classList.add('d-none');
+          bandsStatus.textContent = '';
+          return;
+        }
+        bandsStatus.classList.remove('d-none', 'alert-success', 'alert-danger', 'alert-info', 'alert-warning');
+        const map = { success: 'alert-success', error: 'alert-danger', warning: 'alert-warning', info: 'alert-info' };
+        bandsStatus.classList.add(map[type] || 'alert-info');
+        bandsStatus.textContent = message;
+      }
+
+      function resetBandsUI() {
+        currentBands = {};
+        bandsContainer.innerHTML = `<div class="col-12"><div class="bg-white rounded border p-3 text-muted small">Connetti il modem e premi "Leggi bande" per ottenere l'elenco delle bande disponibili.</div></div>`;
+        setBandsStatus('In attesa di una connessione per leggere le bande.', 'info');
+        bandsRaw.textContent = '';
+        bandsRaw.classList.add('d-none');
+      }
+
+      function parseBandResponse(text) {
+        const state = {};
+        const lines = (text || '').split(/\r?\n/);
+        lines.forEach(line => {
+          const match = line.match(/^(WCDMA|LTE|NR5G_NSA|NR5G_SA),(Enable Bands|Disable Bands)\\s*:?(.*)$/i);
+          if (!match) return;
+          const tech = match[1].toUpperCase();
+          const kind = match[2].toLowerCase().includes('enable') ? 'enabled' : 'disabled';
+          const parts = (match[3] || '')
+            .split(',')
+            .map(v => v.trim())
+            .filter(Boolean);
+          if (!state[tech]) {
+            state[tech] = { enabled: [], disabled: [], available: [] };
+          }
+          state[tech][kind] = parts;
+        });
+
+        bandTechnologies.forEach(({ key }) => {
+          const entry = state[key] || { enabled: [], disabled: [], available: [] };
+          const available = Array.from(new Set([...(entry.enabled || []), ...(entry.disabled || [])]));
+          entry.available = available.length ? available : (defaultBandsCatalog[key] || []);
+          if (!entry.enabled.length && !entry.disabled.length && entry.available.length) {
+            entry.enabled = [...entry.available];
+          }
+          state[key] = entry;
+        });
+
+        return state;
+      }
+
+      function renderBandTables(state) {
+        bandsContainer.innerHTML = '';
+        bandTechnologies.forEach(({ key, label, hint }) => {
+          const info = state[key] || { enabled: [], disabled: [], available: [] };
+          const available = [...(info.available || [])].sort((a, b) => Number(a) - Number(b));
+          const enabledSet = new Set(info.enabled || []);
+          const disabledSet = new Set(info.disabled || []);
+
+          let rows = '';
+          available.forEach(band => {
+            const checked = enabledSet.size ? enabledSet.has(band) : !disabledSet.has(band);
+            rows += `<tr><td class="fw-semibold">${band}</td><td><div class="form-check"><input class="form-check-input band-checkbox" type="checkbox" data-tech="${key}" value="${band}" ${checked ? 'checked' : ''}></div></td></tr>`;
+          });
+
+          if (!rows) {
+            rows = '<tr><td colspan="2" class="text-muted small">Nessuna banda riportata dal modem.</td></tr>';
+          }
+
+          const col = document.createElement('div');
+          col.className = 'col-12 col-md-6';
+          col.innerHTML = `
+            <div class="card h-100">
+              <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                  <div class="fw-semibold">${label}</div>
+                  <div class="text-muted small">${hint || ''}</div>
+                </div>
+                <span class="badge bg-light text-dark">${available.length} bande</span>
+              </div>
+              <div class="card-body p-0">
+                <div class="table-responsive mb-0">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light"><tr><th style="width:60%">Banda</th><th>Abilitata</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                  </table>
+                </div>
+              </div>
+            </div>`;
+          bandsContainer.appendChild(col);
+        });
+      }
+
+      function collectTechSelection(techKey) {
+        const checkboxes = bandsContainer.querySelectorAll(`.band-checkbox[data-tech="${techKey}"]`);
+        const selected = [];
+        const available = [];
+        checkboxes.forEach(box => {
+          available.push(box.value);
+          if (box.checked) selected.push(box.value);
+        });
+        return { selected, available };
+      }
+
+      async function loadBandPreferences(showMessage = true) {
+        if (!sessionToken) {
+          setBandsStatus('Connetti al modem per leggere le bande disponibili.', 'warning');
+          return;
+        }
+        bandsRefreshButton.disabled = true;
+        bandsSaveButton.disabled = true;
+        if (showMessage) {
+          setBandsStatus('Lettura bande dal modem in corso...', 'info');
+        }
+        try {
+          const response = await fetch('/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: sessionToken, command: 'AT^BAND_PREF_EXT?' })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            setBandsStatus('Errore lettura bande: ' + (data.error || 'Richiesta fallita'), 'error');
+            return;
+          }
+          const output = (data.output || '').trim();
+          currentBands = parseBandResponse(output);
+          renderBandTables(currentBands);
+          bandsRaw.textContent = output;
+          bandsRaw.classList.toggle('d-none', !output);
+          setBandsStatus('Bande aggiornate dalla lettura del modem.', 'success');
+        } catch (error) {
+          setBandsStatus('Errore lettura bande: ' + error.message, 'error');
+        } finally {
+          bandsRefreshButton.disabled = false;
+          bandsSaveButton.disabled = false;
+        }
+      }
+
+      async function saveBandPreferences() {
+        if (!sessionToken) {
+          setBandsStatus('Connetti al modem per salvare le bande.', 'warning');
+          return;
+        }
+
+        const commands = [];
+        bandTechnologies.forEach(({ key }) => {
+          const { selected, available } = collectTechSelection(key);
+          if (!available.length) return;
+          const disabled = available.filter(b => !selected.includes(b));
+          if (disabled.length) {
+            commands.push({ tech: key, status: 1, bands: disabled });
+          }
+          if (selected.length) {
+            commands.push({ tech: key, status: 2, bands: selected });
+          }
+        });
+
+        if (!commands.length) {
+          setBandsStatus('Nessuna banda da inviare. Esegui prima la lettura.', 'warning');
+          return;
+        }
+
+        bandsSaveButton.disabled = true;
+        bandsRefreshButton.disabled = true;
+        setBandsStatus('Invio configurazione bande al modem...', 'info');
+
+        try {
+          for (const cmd of commands) {
+            const commandString = `AT^BAND_PREF_EXT=${cmd.tech},${cmd.status},${cmd.bands.join(':')}`;
+            const response = await fetch('/send', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token: sessionToken, command: commandString })
+            });
+            const data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.error || 'Comando AT rifiutato');
+            }
+          }
+
+          setBandsStatus('Configurazione inviata. Rilettura in corso...', 'success');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          await loadBandPreferences(false);
+        } catch (error) {
+          setBandsStatus('Errore durante il salvataggio: ' + error.message, 'error');
+        } finally {
+          bandsSaveButton.disabled = false;
+          bandsRefreshButton.disabled = false;
         }
       }
 

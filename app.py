@@ -1,0 +1,286 @@
+import secrets
+import threading
+import time
+from dataclasses import dataclass
+from typing import Dict, Optional
+
+from flask import Flask, jsonify, request
+import paramiko
+
+
+@dataclass
+class SSHSession:
+    token: str
+    client: paramiko.SSHClient
+    interface: str
+    host: str
+    username: str
+    port: int
+    created_at: float
+
+
+class SessionStore:
+    def __init__(self) -> None:
+        self._sessions: Dict[str, SSHSession] = {}
+        self._lock = threading.Lock()
+
+    def add(self, client: paramiko.SSHClient, interface: str, host: str, username: str, port: int) -> SSHSession:
+        token = secrets.token_urlsafe(32)
+        session = SSHSession(
+            token=token,
+            client=client,
+            interface=interface,
+            host=host,
+            username=username,
+            port=port,
+            created_at=time.time(),
+        )
+        with self._lock:
+            self._sessions[token] = session
+        return session
+
+    def get(self, token: str) -> Optional[SSHSession]:
+        with self._lock:
+            return self._sessions.get(token)
+
+    def remove(self, token: str) -> None:
+        with self._lock:
+            session = self._sessions.pop(token, None)
+        if session:
+            session.client.close()
+
+    def cleanup(self, max_age_seconds: int = 1800) -> None:
+        cutoff = time.time() - max_age_seconds
+        to_remove = []
+        with self._lock:
+            for token, session in list(self._sessions.items()):
+                if session.created_at < cutoff:
+                    to_remove.append(token)
+        for token in to_remove:
+            self.remove(token)
+
+
+app = Flask(__name__)
+sessions = SessionStore()
+
+
+HTML_PAGE = """
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Remote LTE AT Chat</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 2rem; background: #f5f5f5; }
+      form, .panel { background: white; padding: 1rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+      label { display: block; margin-top: 0.5rem; font-weight: bold; }
+      input { width: 100%; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; }
+      button { margin-top: 1rem; padding: 0.5rem 1rem; font-size: 1rem; }
+      #terminal { background: #111; color: #0f0; font-family: monospace; min-height: 200px; padding: 0.75rem; border-radius: 6px; white-space: pre-wrap; }
+      #status { margin-top: 0.5rem; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <h1>Remote LTE AT Chat</h1>
+    <p>Inserisci i dettagli di connessione SSH per il modem MikroTik e prova a stabilire la sessione.</p>
+    <form id="connection-form">
+      <label>Indirizzo IP / Host
+        <input name="host" required placeholder="192.168.88.1" />
+      </label>
+      <label>Username
+        <input name="username" required placeholder="admin" />
+      </label>
+      <label>Password
+        <input type="password" name="password" required />
+      </label>
+      <label>Porta SSH
+        <input name="port" type="number" min="1" max="65535" value="22" />
+      </label>
+      <label>Interfaccia LTE
+        <input name="interface" required placeholder="lte1" />
+      </label>
+      <button type="submit">Prova connessione</button>
+      <div id="status"></div>
+    </form>
+
+    <div id="terminal-panel" class="panel hidden">
+      <h2>Terminale AT</h2>
+      <div id="terminal" aria-live="polite"></div>
+      <label>Comando AT
+        <input id="command-input" placeholder="ati" />
+      </label>
+      <button id="send-button">Invia</button>
+      <button id="disconnect-button">Disconnetti</button>
+    </div>
+
+    <script>
+      const form = document.getElementById('connection-form');
+      const statusEl = document.getElementById('status');
+      const terminalPanel = document.getElementById('terminal-panel');
+      const terminal = document.getElementById('terminal');
+      const commandInput = document.getElementById('command-input');
+      const sendButton = document.getElementById('send-button');
+      const disconnectButton = document.getElementById('disconnect-button');
+      let sessionToken = null;
+
+      function appendTerminal(text) {
+        terminal.textContent += text + "\n";
+        terminal.scrollTop = terminal.scrollHeight;
+      }
+
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        statusEl.textContent = 'Connessione in corso...';
+        const formData = new FormData(form);
+        const payload = Object.fromEntries(formData.entries());
+        payload.port = Number(payload.port || 22);
+        try {
+          const response = await fetch('/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            statusEl.textContent = data.error || 'Connessione fallita';
+            return;
+          }
+          sessionToken = data.token;
+          statusEl.textContent = 'Connessione stabilita.';
+          terminalPanel.classList.remove('hidden');
+          appendTerminal('Output iniziale:\n' + data.preview.trim());
+          commandInput.focus();
+        } catch (error) {
+          console.error(error);
+          statusEl.textContent = 'Errore durante la connessione.';
+        }
+      });
+
+      sendButton.addEventListener('click', async () => {
+        if (!sessionToken) return;
+        const command = commandInput.value.trim();
+        if (!command) return;
+        appendTerminal('> ' + command);
+        commandInput.value = '';
+        try {
+          const response = await fetch('/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: sessionToken, command }),
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            appendTerminal('Errore: ' + (data.error || 'Impossibile inviare il comando'));
+            return;
+          }
+          appendTerminal(data.output.trim());
+        } catch (error) {
+          console.error(error);
+          appendTerminal('Errore di rete durante l\'invio.');
+        }
+      });
+
+      disconnectButton.addEventListener('click', async () => {
+        if (!sessionToken) return;
+        await fetch('/disconnect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: sessionToken })
+        });
+        terminalPanel.classList.add('hidden');
+        terminal.textContent = '';
+        statusEl.textContent = 'Sessione terminata.';
+        sessionToken = null;
+      });
+    </script>
+  </body>
+</html>
+"""
+
+
+def _run_at_command(session: SSHSession, at_command: str) -> str:
+    full_command = f"interface/lte/at-chat {session.interface}\ninput: {at_command}"
+    stdin, stdout, stderr = session.client.exec_command(full_command, timeout=15)
+    output = stdout.read().decode(errors="ignore")
+    error_output = stderr.read().decode(errors="ignore")
+    return output + ("\n" + error_output if error_output else "")
+
+
+@app.route("/", methods=["GET"])
+def index() -> str:
+    return HTML_PAGE
+
+
+@app.route("/connect", methods=["POST"])
+def connect():
+    data = request.get_json(force=True)
+    required = ["host", "username", "password", "interface"]
+    missing = [key for key in required if not data.get(key)]
+    if missing:
+        return jsonify({"error": f"Campi mancanti: {', '.join(missing)}"}), 400
+    host = data["host"].strip()
+    username = data["username"].strip()
+    password = data["password"]
+    interface = data["interface"].strip()
+    port = int(data.get("port", 22))
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(
+            hostname=host,
+            port=port,
+            username=username,
+            password=password,
+            look_for_keys=False,
+            allow_agent=False,
+            timeout=10,
+        )
+    except Exception as exc:  # pragma: no cover - network errors
+        return jsonify({"error": f"Connessione SSH fallita: {exc}"}), 502
+
+    session = sessions.add(client, interface, host, username, port)
+    try:
+        preview = _run_at_command(session, "ati")
+    except Exception as exc:  # pragma: no cover - command errors
+        sessions.remove(session.token)
+        return jsonify({"error": f"SSH attivo ma comando non riuscito: {exc}"}), 500
+
+    sessions.cleanup()
+    return jsonify({"token": session.token, "preview": preview})
+
+
+@app.route("/send", methods=["POST"])
+def send_command():
+    data = request.get_json(force=True)
+    token = data.get("token")
+    command = (data.get("command") or "").strip()
+    if not token or not command:
+        return jsonify({"error": "Token o comando mancante."}), 400
+
+    session = sessions.get(token)
+    if not session:
+        return jsonify({"error": "Sessione non trovata o scaduta."}), 404
+
+    try:
+        output = _run_at_command(session, command)
+    except Exception as exc:  # pragma: no cover - network errors
+        sessions.remove(token)
+        return jsonify({"error": f"Comando fallito: {exc}"}), 502
+
+    return jsonify({"output": output})
+
+
+@app.route("/disconnect", methods=["POST"])
+def disconnect():
+    data = request.get_json(force=True)
+    token = data.get("token")
+    if token:
+        sessions.remove(token)
+    return jsonify({"status": "disconnected"})
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=False)

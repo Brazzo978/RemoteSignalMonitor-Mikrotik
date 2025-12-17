@@ -350,8 +350,49 @@ HTML_PAGE = """<!doctype html>
           </div>
 
           <div class="tab-pane" data-tab="info">
-            <h5 class="panel-title mb-3">Info</h5>
-            <p class="text-muted mb-0">Area informativa in attesa di contenuti aggiuntivi.</p>
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+              <div>
+                <h5 class="panel-title mb-1">Info modem</h5>
+                <p class="text-muted mb-0">Dati parsati dal comando ATI.</p>
+              </div>
+              <div class="d-flex gap-2">
+                <button class="btn btn-outline-primary btn-sm" id="info-refresh" type="button">Aggiorna</button>
+              </div>
+            </div>
+
+            <div id="info-status" class="alert alert-info d-none" role="alert"></div>
+
+            <div class="row g-3">
+              <div class="col-md-6">
+                <div class="card border-0 shadow-sm h-100">
+                  <div class="card-body">
+                    <h6 class="fw-semibold mb-3">Identità modem (ATI)</h6>
+                    <div class="table-responsive">
+                      <table class="table table-sm mb-0">
+                        <tbody>
+                          <tr><th>Produttore</th><td id="info-manufacturer">-</td></tr>
+                          <tr><th>Modello</th><td id="info-model">-</td></tr>
+                          <tr><th>Revisione</th><td id="info-revision">-</td></tr>
+                          <tr><th>SVN</th><td id="info-svn">-</td></tr>
+                          <tr><th>IMEI</th><td id="info-imei">-</td></tr>
+                          <tr><th>GCAP</th><td id="info-gcap">-</td></tr>
+                          <tr><th>MPN</th><td id="info-mpn">-</td></tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="bg-white border rounded h-100 p-3">
+                  <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div class="fw-semibold">Output grezzo</div>
+                    <span class="badge bg-light text-dark" id="info-last-update">-</span>
+                  </div>
+                  <pre id="info-raw" class="bg-dim p-2 small rounded" style="min-height: 120px; max-height: 260px; overflow:auto;"></pre>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -380,9 +421,23 @@ HTML_PAGE = """<!doctype html>
       const bandsRaw = document.getElementById('bands-raw');
       const bandsRefreshButton = document.getElementById('bands-refresh-button');
       const bandsSaveButton = document.getElementById('bands-save-button');
+      const infoRefreshButton = document.getElementById('info-refresh');
+      const infoStatus = document.getElementById('info-status');
+      const infoRaw = document.getElementById('info-raw');
+      const infoLastUpdate = document.getElementById('info-last-update');
+      const infoFields = {
+        manufacturer: document.getElementById('info-manufacturer'),
+        model: document.getElementById('info-model'),
+        revision: document.getElementById('info-revision'),
+        svn: document.getElementById('info-svn'),
+        imei: document.getElementById('info-imei'),
+        gcap: document.getElementById('info-gcap'),
+        mpn: document.getElementById('info-mpn'),
+      };
       let sessionToken = null;
       let autoTimer = null;
       let currentBands = {};
+      let modemInfoLoaded = false;
       const bandTechnologies = [
         { key: 'WCDMA', label: 'WCDMA', hint: 'Bande 3G' },
         { key: 'LTE', label: 'LTE', hint: 'Bande 4G' },
@@ -406,6 +461,9 @@ HTML_PAGE = """<!doctype html>
         if (pane) pane.classList.add('active');
         if (target === 'bande' && sessionToken && !Object.keys(currentBands).length) {
           loadBandPreferences(false);
+        }
+        if (target === 'info') {
+          fetchModemInfo(!modemInfoLoaded);
         }
       });
 
@@ -487,6 +545,56 @@ HTML_PAGE = """<!doctype html>
         connectionBadge.textContent = connected ? 'Connesso' : 'Disconnesso';
         connectionBadge.className = connected ? 'badge text-bg-success' : 'badge text-bg-secondary';
         connectButton.disabled = connected;
+      }
+
+      function setInfoStatus(message, type = 'info') {
+        infoStatus.classList.remove('d-none', 'alert-success', 'alert-danger', 'alert-info', 'alert-warning');
+        const map = { success: 'alert-success', error: 'alert-danger', info: 'alert-info', warning: 'alert-warning' };
+        infoStatus.classList.add(map[type] || 'alert-info');
+        infoStatus.textContent = message;
+      }
+
+      function renderModemInfo(parsed) {
+        Object.entries(infoFields).forEach(([key, el]) => {
+          if (!el) return;
+          el.textContent = parsed[key] || '-';
+        });
+        infoLastUpdate.textContent = new Date().toLocaleTimeString();
+      }
+
+      async function fetchModemInfo(showMessage = true) {
+        if (!sessionToken) {
+          setInfoStatus('Connetti al modem per leggere le informazioni.', 'warning');
+          return;
+        }
+
+        infoRefreshButton.disabled = true;
+        if (showMessage) {
+          setInfoStatus('Lettura dati ATI in corso...', 'info');
+        }
+
+        try {
+          const response = await fetch('/info', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: sessionToken })
+          });
+          const data = await response.json();
+
+          if (!response.ok) {
+            setInfoStatus('Errore lettura info: ' + (data.error || 'richiesta fallita'), 'error');
+            return;
+          }
+
+          renderModemInfo(data.parsed || {});
+          infoRaw.textContent = (data.raw || '').trim();
+          setInfoStatus('Info modem aggiornate.', 'success');
+          modemInfoLoaded = true;
+        } catch (error) {
+          setInfoStatus('Errore lettura info: ' + error.message, 'error');
+        } finally {
+          infoRefreshButton.disabled = false;
+        }
       }
 
       async function handleConnect(event) {
@@ -603,9 +711,11 @@ HTML_PAGE = """<!doctype html>
           autoTimer = null;
         }
         resetBandsUI();
+        resetInfoUI();
       });
 
       refreshButton.addEventListener('click', fetchSignals);
+      infoRefreshButton.addEventListener('click', () => fetchModemInfo(true));
       autoRefresh.addEventListener('change', syncAutoRefreshState);
       autoRefreshInterval.addEventListener('change', () => {
         enforceIntervalBounds();
@@ -615,6 +725,7 @@ HTML_PAGE = """<!doctype html>
       bandsSaveButton.addEventListener('click', saveBandPreferences);
 
       resetBandsUI();
+      resetInfoUI();
 
       function enforceIntervalBounds() {
         const value = Number(autoRefreshInterval.value);
@@ -667,6 +778,16 @@ HTML_PAGE = """<!doctype html>
         setBandsStatus('In attesa di una connessione per leggere le bande.', 'info');
         bandsRaw.textContent = '';
         bandsRaw.classList.add('d-none');
+      }
+
+      function resetInfoUI() {
+        modemInfoLoaded = false;
+        Object.values(infoFields).forEach(el => {
+          if (el) el.textContent = '-';
+        });
+        infoRaw.textContent = '';
+        infoLastUpdate.textContent = '-';
+        setInfoStatus('In attesa di una connessione per leggere le info modem.', 'info');
       }
 
       function parseBandResponse(text) {
@@ -1006,12 +1127,26 @@ def _build_ros_at_chat_cmd(interface: str, at_cmd: str) -> str:
 
 
 def _parse_ati_output(text: str) -> Dict[str, str]:
-    parsed: Dict[str, str] = {}
-    for line in text.splitlines():
-        if ":" not in line:
+    parsed: Dict[str, str] = {
+        "manufacturer": "-",
+        "model": "-",
+        "revision": "-",
+        "svn": "-",
+        "imei": "-",
+        "gcap": "-",
+        "mpn": "-",
+    }
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.upper() == "OK" or ":" not in line:
             continue
-        key, _, value = line.partition(":")
-        parsed[key.strip().lower()] = value.strip()
+
+        key, value = line.split(":", 1)
+        normalized_key = key.strip().lstrip("+").lower()
+        if normalized_key in parsed:
+            parsed[normalized_key] = value.strip() or "-"
+
     return parsed
 
 
@@ -1599,6 +1734,28 @@ def send_command():
         return jsonify({"error": f"Comando fallito: {str(exc)}"}), 502
 
     return jsonify({"output": output})
+
+
+@app.route("/info", methods=["POST"])
+def modem_info():
+    logger.info("Richiesta POST a /info ricevuta")
+    data = request.get_json(force=True)
+    token = data.get("token")
+    if not token:
+        return jsonify({"error": "Token mancante"}), 400
+
+    session = sessions.get(token)
+    if not session:
+        return jsonify({"error": "Sessione non trovata o scaduta"}), 404
+
+    try:
+        ati_text = _run_at_command(session, "ATI", timeout=15)
+    except Exception as exc:
+        logger.exception("Errore durante la lettura di ATI")
+        return jsonify({"error": f"Comando ATI fallito: {str(exc)}"}), 502
+
+    parsed = _parse_ati_output(ati_text)
+    return jsonify({"parsed": parsed, "raw": ati_text})
 
 
 @app.route("/signals", methods=["POST"])

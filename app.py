@@ -1,3 +1,4 @@
+import logging
 import secrets
 import threading
 import time
@@ -59,6 +60,12 @@ class SessionStore:
         for token in to_remove:
             self.remove(token)
 
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 sessions = SessionStore()
@@ -222,6 +229,14 @@ def _run_at_command(session: SSHSession, at_command: str) -> str:
     return output + ("\n" + error_output if error_output else "")
 
 
+def _mask_password(password: str) -> str:
+    if not password:
+        return "<vuoto>"
+    if len(password) <= 4:
+        return "*" * len(password)
+    return f"{password[0]}***{password[-1]} (len={len(password)})"
+
+
 @app.route("/", methods=["GET"])
 def index() -> str:
     return HTML_PAGE
@@ -240,6 +255,15 @@ def connect():
     interface = data["interface"].strip()
     port = int(data.get("port", 22))
 
+    logger.info(
+        "Richiesta connessione ricevuta: host=%s port=%s user=%s interface=%s password=%s",
+        host,
+        port,
+        username,
+        interface,
+        _mask_password(password),
+    )
+
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     try:
@@ -253,6 +277,7 @@ def connect():
             timeout=10,
         )
     except Exception as exc:  # pragma: no cover - network errors
+        logger.exception("Connessione SSH fallita verso %s:%s", host, port)
         return jsonify({"error": f"Connessione SSH fallita: {exc}"}), 502
 
     session = sessions.add(client, interface, host, username, port)
@@ -260,8 +285,24 @@ def connect():
         preview = _run_at_command(session, "ati")
     except Exception as exc:  # pragma: no cover - command errors
         sessions.remove(session.token)
+        logger.exception(
+            "Comando di prova 'ati' fallito per %s@%s:%s (token=%s)",
+            username,
+            host,
+            port,
+            session.token,
+        )
         return jsonify({"error": f"SSH attivo ma comando non riuscito: {exc}"}), 500
 
+    logger.info(
+        "Connessione stabilita (token=%s) per %s@%s:%s su %s. Output iniziale: %s",
+        session.token,
+        username,
+        host,
+        port,
+        interface,
+        (preview.strip()[:300] + "...") if len(preview) > 300 else preview.strip(),
+    )
     sessions.cleanup()
     return jsonify({"token": session.token, "preview": preview})
 
@@ -278,12 +319,23 @@ def send_command():
     if not session:
         return jsonify({"error": "Sessione non trovata o scaduta."}), 404
 
+    logger.info(
+        "Invio comando AT per token=%s (%s@%s:%s su %s): %s",
+        token,
+        session.username,
+        session.host,
+        session.port,
+        session.interface,
+        command,
+    )
     try:
         output = _run_at_command(session, command)
     except Exception as exc:  # pragma: no cover - network errors
         sessions.remove(token)
+        logger.exception("Errore durante l'esecuzione del comando '%s' (token=%s)", command, token)
         return jsonify({"error": f"Comando fallito: {exc}"}), 502
 
+    logger.info("Comando completato (token=%s): %s", token, command)
     return jsonify({"output": output})
 
 
@@ -292,7 +344,9 @@ def disconnect():
     data = request.get_json(force=True)
     token = data.get("token")
     if token:
+        logger.info("Richiesta disconnessione per token=%s", token)
         sessions.remove(token)
+        logger.info("Sessione chiusa per token=%s", token)
     return jsonify({"status": "disconnected"})
 
 

@@ -236,35 +236,41 @@ HTML_PAGE = """<!doctype html>
               </div>
             </div>
 
-            <div class="row mt-3">
-              <div class="col-lg-7">
-                <div class="signal-meter">
+            <div class="row g-3 mt-3">
+              <div class="col-md-6">
+                <div class="signal-meter h-100">
                   <div class="d-flex justify-content-between small mb-1"><span class="fw-semibold">RSRP</span><span id="rsrp-value">-</span></div>
                   <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar" id="rsrp-bar" style="width: 0%"></div>
                   </div>
                 </div>
-                <div class="signal-meter">
-                  <div class="d-flex justify-content-between small mb-1"><span class="fw-semibold">RSRQ</span><span id="rsrq-value">-</span></div>
-                  <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
-                    <div class="progress-bar" id="rsrq-bar" style="width: 0%"></div>
-                  </div>
-                </div>
-                <div class="signal-meter">
-                  <div class="d-flex justify-content-between small mb-1"><span class="fw-semibold">SNR</span><span id="snr-value">-</span></div>
-                  <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
-                    <div class="progress-bar" id="snr-bar" style="width: 0%"></div>
-                  </div>
-                </div>
-                <div class="signal-meter">
+              </div>
+              <div class="col-md-6">
+                <div class="signal-meter h-100">
                   <div class="d-flex justify-content-between small mb-1"><span class="fw-semibold">RSSI</span><span id="rssi-value">-</span></div>
                   <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
                     <div class="progress-bar" id="rssi-bar" style="width: 0%"></div>
                   </div>
                 </div>
               </div>
-              <div class="col-lg-5">
-                <div class="card border-0 bg-white shadow-sm h-100">
+              <div class="col-md-6">
+                <div class="signal-meter h-100">
+                  <div class="d-flex justify-content-between small mb-1"><span class="fw-semibold">RSRQ</span><span id="rsrq-value">-</span></div>
+                  <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar" id="rsrq-bar" style="width: 0%"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-md-6">
+                <div class="signal-meter h-100">
+                  <div class="d-flex justify-content-between small mb-1"><span class="fw-semibold">SNR</span><span id="snr-value">-</span></div>
+                  <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">
+                    <div class="progress-bar" id="snr-bar" style="width: 0%"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="col-12">
+                <div class="card border-0 bg-white shadow-sm">
                   <div class="card-header bg-white border-0 pb-0 d-flex justify-content-between align-items-center">
                     <div>
                       <div class="fw-semibold">Segnali avanzati</div>

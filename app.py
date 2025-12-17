@@ -106,6 +106,10 @@ HTML_PAGE = """<!doctype html>
       .signal-meter { background: #fff; border: 1px solid #e9edf3; border-radius: 10px; padding: 0.75rem; box-shadow: inset 0 1px 0 rgba(255,255,255,0.6); }
       .signal-meter + .signal-meter { margin-top: 0.6rem; }
       .badge-soft { background: #f3f6fb; color: #3b4863; border-radius: 12px; padding: 0.15rem 0.5rem; }
+      .band-group { background: #fff; border: 1px solid #e9edf3; border-radius: 10px; padding: 0.85rem 1rem; }
+      .band-chip { padding: 0.2rem 0.55rem; border-radius: 999px; }
+      .band-chip input { display: none; }
+      .band-chip-label { min-width: 46px; }
     </style>
   </head>
   <body class="pb-5">
@@ -706,34 +710,29 @@ HTML_PAGE = """<!doctype html>
           const enabledSet = new Set(info.enabled || []);
           const disabledSet = new Set(info.disabled || []);
 
-          let rows = '';
-          available.forEach(band => {
-            const checked = enabledSet.size ? enabledSet.has(band) : !disabledSet.has(band);
-            rows += `<tr><td class="fw-semibold">${band}</td><td><div class="form-check"><input class="form-check-input band-checkbox" type="checkbox" data-tech="${key}" value="${band}" ${checked ? 'checked' : ''}></div></td></tr>`;
-          });
-
-          if (!rows) {
-            rows = '<tr><td colspan="2" class="text-muted small">Nessuna banda riportata dal modem.</td></tr>';
-          }
+          const pills = available
+            .map(band => {
+              const checked = enabledSet.size ? enabledSet.has(band) : !disabledSet.has(band);
+              const inputId = `${key}-${band}`;
+              return `
+                <input class="btn-check band-checkbox" type="checkbox" data-tech="${key}" value="${band}" id="${inputId}" ${checked ? 'checked' : ''}>
+                <label class="btn btn-outline-primary btn-sm band-chip band-chip-label" for="${inputId}">${band}</label>`;
+            })
+            .join('');
 
           const col = document.createElement('div');
-          col.className = 'col-12 col-md-6';
+          col.className = 'col-12';
           col.innerHTML = `
-            <div class="card h-100">
-              <div class="card-header d-flex justify-content-between align-items-center">
+            <div class="band-group mb-2">
+              <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
                 <div>
                   <div class="fw-semibold">${label}</div>
                   <div class="text-muted small">${hint || ''}</div>
                 </div>
                 <span class="badge bg-light text-dark">${available.length} bande</span>
               </div>
-              <div class="card-body p-0">
-                <div class="table-responsive mb-0">
-                  <table class="table table-sm align-middle mb-0">
-                    <thead class="table-light"><tr><th style="width:60%">Banda</th><th>Abilitata</th></tr></thead>
-                    <tbody>${rows}</tbody>
-                  </table>
-                </div>
+              <div class="d-flex flex-wrap gap-1 align-items-center">
+                ${pills || '<span class="text-muted small">Nessuna banda riportata dal modem.</span>'}
               </div>
             </div>`;
           bandsContainer.appendChild(col);

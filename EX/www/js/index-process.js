@@ -620,35 +620,33 @@ return {
           this.networkMode = network_mode;
 
           // --- Bands ---
-          // Get all the values with LTE BAND n (for example, LTE BAND 3, LTE BAND 1) and then store them in an array
-          const bands = lines.filter((line) =>
-            line.includes("lte_band:")
+          const lteBands = lines
+            .filter((line) => line.includes("lte_band:"))
+            .map((line) => {
+              const match = line.match(/lte_band:([0-9]+)/i);
+              return match ? match[1] : null;
+            })
+            .filter(Boolean);
+
+          const nrBands = lines
+            .filter((line) => line.includes("nr_band:"))
+            .map((line) => {
+              const match = line.match(/nr_band:([^\s]+)/i);
+              if (!match) {
+                return null;
+              }
+              const value = match[1].replace(/"/g, "").trim();
+              return value.toLowerCase().startsWith("n") ? value : `n${value}`;
+            })
+            .filter(Boolean);
+
+          const combinedBands = [...lteBands, ...nrBands].filter(
+            (band, index, arr) => arr.indexOf(band) === index
           );
 
-          // since it includes the whole line, we need to extract the band part only
-          for (let i = 0; i < bands.length; i++) {
-            bands[i] = bands[i].split(":")[2].split(" ")[0].replace(/"/g, "");
-          }
-
-          // Get all the values with NR BAND n (for example, NR BAND 3, NR BAND 1) and then store them in an array
-          const bands_5g = lines.filter((line) =>
-            line.includes("nr_band:")
-          );
-          // since it includes the whole line, we need to extract the band number only
-          for (let i = 0; i < bands_5g.length; i++) {
-            bands_5g[i] = bands_5g[i].split(":")[1].replace(/"/g, "");
-          }
-
-          // Combine the bands and bands_5g arrays seperated by a comma. however, bands or bands_5g can be empty
-          if (bands.length > 0 && bands_5g.length > 0) {
-            this.bands = bands.join(", ") + ", " + bands_5g.join(", ");
-          } else if (bands.length > 0) {
-            this.bands = bands.join(", ");
-          } else if (bands_5g.length > 0) {
-            this.bands = bands_5g.join(", ");
-          } else {
-            this.bands = "No Bands";
-          }
+          this.bands = combinedBands.length
+            ? combinedBands.join("+")
+            : "No Bands";
 
           // --- Bandwidth ---
           const bandwidth = lines.filter((line) =>

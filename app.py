@@ -852,6 +852,7 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
         detail = {
             "title": title,
             "technology": entry.get("technology"),
+            "band": entry.get("band"),
             "band_display": band_display,
             "bandwidth": entry.get("bandwidth") or "-",
             "channel": entry.get("channel") or "-",
@@ -1140,6 +1141,31 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
 
     _finalize_entry(current_entry, advanced_entries)
     info["advanced"] = advanced_entries
+
+    def _build_band_display(entries: list) -> str:
+        seen = set()
+        ordered_bands = []
+
+        for entry in entries:
+            band = entry.get("band")
+            technology = entry.get("technology")
+
+            if not band:
+                continue
+
+            normalized_band = str(band).strip()
+            if technology == "NR" and not normalized_band.lower().startswith("n"):
+                normalized_band = f"n{normalized_band}"
+
+            if normalized_band in seen:
+                continue
+
+            seen.add(normalized_band)
+            ordered_bands.append(normalized_band)
+
+        return " + ".join(ordered_bands) if ordered_bands else "-"
+
+    info["bands"] = _build_band_display(advanced_entries)
 
     return info
 

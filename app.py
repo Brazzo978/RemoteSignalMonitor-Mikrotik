@@ -773,20 +773,17 @@ def _parse_ati_output(text: str) -> Dict[str, str]:
 
 def _parse_temp_output(text: str) -> str:
     temps = []
-    details = []
     for label in ["TSENS", "PA", "Skin Sensor"]:
         match = re.search(rf"{re.escape(label)}:\s*([+-]?\d+)C", text, re.IGNORECASE)
         if match:
             value = int(match.group(1))
             temps.append(value)
-            details.append(f"{label.split()[0]}:{value}°C")
 
     if not temps:
         return "-"
 
     average = sum(temps) / len(temps)
-    detail_text = " | ".join(details)
-    return f"Media {average:.1f}°C" + (f" ({detail_text})" if detail_text else "")
+    return f"Media {average:.1f}°C"
 
 
 def _parse_debug_output(text: str) -> Dict[str, Any]:

@@ -5,8 +5,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
-import re
-
 from flask import Flask, jsonify, request
 import paramiko
 
@@ -78,220 +76,112 @@ sessions = SessionStore()
 
 
 HTML_PAGE = """<!doctype html>
-<html lang=\"it\">
+<html lang="en">
   <head>
-    <meta charset=\"utf-8\" />
-    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-    <title>Remote Signal Monitor</title>
-    <link
-      href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css\"
-      rel=\"stylesheet\"
-      integrity=\"sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH\"
-      crossorigin=\"anonymous\"
-    />
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Remote LTE AT Chat</title>
     <style>
-      body { background: #f5f7fb; }
-      .card-icon { width: 58px; height: 58px; }
-      .terminal { background: #0b0d0e; color: #3dff8f; font-family: "Fira Code", monospace; min-height: 260px; max-height: 380px; overflow-y: auto; border-radius: 6px; padding: 1rem; }
-      .panel-title { letter-spacing: 0.5px; }
-      .status-pill { padding: 0.35rem 0.75rem; border-radius: 999px; font-weight: 600; }
-      .bg-dim { background: #eef2f7; }
-      .signal-table th { width: 38%; }
+      body { font-family: Arial, sans-serif; margin: 2rem; background: #f5f5f5; }
+      form, .panel { background: white; padding: 1rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 1rem; }
+      label { display: block; margin-top: 0.5rem; font-weight: bold; }
+      input { width: 100%; padding: 0.5rem; margin-top: 0.25rem; box-sizing: border-box; border: 1px solid #ccc; border-radius: 4px; }
+      button { margin-top: 1rem; padding: 0.5rem 1rem; font-size: 1rem; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+      button:hover { background: #0056b3; }
+      button:disabled { background: #ccc; cursor: not-allowed; }
+      #terminal { background: #111; color: #0f0; font-family: 'Courier New', monospace; min-height: 300px; max-height: 500px; overflow-y: auto; padding: 0.75rem; border-radius: 6px; white-space: pre-wrap; word-wrap: break-word; }
+      #status { margin-top: 0.5rem; font-weight: bold; padding: 0.5rem; border-radius: 4px; }
+      .error { background: #ffebee; color: #c62828; }
+      .success { background: #e8f5e9; color: #2e7d32; }
+      .info { background: #e3f2fd; color: #1565c0; }
+      .hidden { display: none; }
+      .info-text { color: #666; font-size: 0.9rem; margin-top: 0.25rem; }
+      #debug-log { background: #f5f5f5; padding: 0.5rem; border-radius: 4px; font-family: monospace; font-size: 0.8rem; max-height: 150px; overflow-y: auto; margin-top: 1rem; }
     </style>
   </head>
-  <body class=\"pb-5\">
-    <main class=\"container py-4\">
-      <nav class=\"navbar navbar-expand-lg mb-4 bg-white rounded shadow-sm px-3\">
-        <a class=\"navbar-brand fw-bold\" href=\"#\">Simple T99 (SSH)</a>
-        <div class=\"ms-auto d-flex align-items-center gap-2\">
-          <span class=\"badge text-bg-secondary\" id=\"connection-badge\">Disconnesso</span>
-        </div>
-      </nav>
+  <body>
+    <h1>Remote LTE AT Chat</h1>
+    <p>Connettiti al modem LTE MikroTik tramite SSH e invia comandi AT (wrappati in /interface lte at-chat).</p>
 
-      <div class=\"row g-3\">
-        <div class=\"col-12 col-lg-5\">
-          <div class=\"card shadow-sm\">
-            <div class=\"card-body\">
-              <h5 class=\"card-title panel-title mb-3\">Connessione SSH guidata</h5>
-              <form id=\"connection-form\" class=\"row g-3\">
-                <div class=\"col-12\">
-                  <label class=\"form-label fw-semibold\">Indirizzo IP / Host</label>
-                  <input class=\"form-control\" name=\"host\" required placeholder=\"192.168.88.1\" value=\"192.168.88.1\" />
-                </div>
-                <div class=\"col-md-6\">
-                  <label class=\"form-label fw-semibold\">Username</label>
-                  <input class=\"form-control\" name=\"username\" required placeholder=\"admin\" value=\"admin\" />
-                </div>
-                <div class=\"col-md-6\">
-                  <label class=\"form-label fw-semibold\">Password</label>
-                  <input class=\"form-control\" type=\"password\" name=\"password\" required />
-                </div>
-                <div class=\"col-md-6\">
-                  <label class=\"form-label fw-semibold\">Porta SSH</label>
-                  <input class=\"form-control\" name=\"port\" type=\"number\" min=\"1\" max=\"65535\" value=\"22\" />
-                </div>
-                <div class=\"col-md-6\">
-                  <label class=\"form-label fw-semibold\">Interfaccia LTE</label>
-                  <input class=\"form-control\" name=\"interface\" required placeholder=\"lte1\" value=\"lte1\" />
-                  <small class=\"text-muted\">Nome dell'interfaccia LTE sul router</small>
-                </div>
-                <div class=\"col-12 d-flex gap-2\">
-                  <button type=\"button\" class=\"btn btn-primary flex-grow-1\" id=\"connect-button\">Connetti</button>
-                  <button type=\"button\" class=\"btn btn-outline-danger\" id=\"disconnect-button\">Disconnetti</button>
-                </div>
-                <div class=\"col-12\">
-                  <div id=\"status\" class=\"alert p-2 mb-0 d-none\"></div>
-                  <pre id=\"debug-log\" class=\"bg-dim p-2 small rounded d-none\"></pre>
-                </div>
-              </form>
-            </div>
-          </div>
-          <div class=\"card shadow-sm mt-3\">
-            <div class=\"card-body\">
-              <h6 class=\"card-subtitle text-muted\">Terminale AT</h6>
-              <div class=\"terminal mt-2\" id=\"terminal\" aria-live=\"polite\"></div>
-              <div class=\"input-group mt-2\">
-                <input id=\"command-input\" class=\"form-control\" placeholder=\"ATI\" />
-                <button id=\"send-button\" class=\"btn btn-secondary\">Invia</button>
-              </div>
-              <small class=\"text-muted\">Esempi: ATI, AT^DEBUG?, AT^TEMP?</small>
-            </div>
-          </div>
-        </div>
+    <div class="panel">
+      <h2>Istruzioni</h2>
+      <ol>
+        <li>Compila i campi di connessione SSH (host, username, password)</li>
+        <li>Specifica l'interfaccia LTE (es. lte1)</li>
+        <li>Clicca su Connetti</li>
+        <li>Inserisci comandi AT nel terminale (es: ATI, AT+CSQ, AT+COPS?)</li>
+      </ol>
+      <p class="info-text">Apri la console del browser (F12) per vedere eventuali errori JavaScript.</p>
+    </div>
 
-        <div class=\"col-12 col-lg-7\">
-          <div class=\"card shadow-sm\">
-            <div class=\"card-body\">
-              <div class=\"d-flex align-items-center justify-content-between flex-wrap gap-2\">
-                <div>
-                  <h5 class=\"card-title panel-title mb-0\">Segnali &amp; Stato modem</h5>
-                  <small class=\"text-muted\">Dati raccolti via AT (ATI, AT^DEBUG?, AT^TEMP?) over SSH</small>
-                </div>
-                <div class=\"d-flex gap-2\">
-                  <button id=\"refresh-button\" class=\"btn btn-outline-primary btn-sm\">Aggiorna</button>
-                  <div class=\"form-check form-switch\">
-                    <input class=\"form-check-input\" type=\"checkbox\" id=\"auto-refresh\" />
-                    <label class=\"form-check-label\" for=\"auto-refresh\">Auto 10s</label>
-                  </div>
-                </div>
-              </div>
+    <form id="connection-form">
+      <h2>Connessione SSH</h2>
+      <label>Indirizzo IP / Host
+        <input name="host" required placeholder="192.168.88.1" value="192.168.88.1" />
+      </label>
+      <label>Username
+        <input name="username" required placeholder="admin" value="admin" />
+      </label>
+      <label>Password
+        <input type="password" name="password" required />
+      </label>
+      <label>Porta SSH
+        <input name="port" type="number" min="1" max="65535" value="22" />
+      </label>
+      <label>Interfaccia LTE
+        <input name="interface" required placeholder="lte1" value="lte1" />
+        <span class="info-text">Nome dell'interfaccia LTE sul router</span>
+      </label>
+      <button type="button" id="connect-button">Connetti</button>
+      <div id="status" class="hidden"></div>
+      <div id="debug-log" class="hidden"></div>
+    </form>
 
-              <div class=\"row row-cols-1 row-cols-md-2 g-3 mt-2\">
-                <div class=\"col\">
-                  <div class=\"card bg-light border-0 h-100\">
-                    <div class=\"card-body\">
-                      <div class=\"d-flex align-items-center gap-3\">
-                        <svg class=\"card-icon\" viewBox=\"0 0 640 512\" fill=\"#2fa7fb\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M576 0c17.7 0 32 14.3 32 32V480c0 17.7-14.3 32-32 32s-32-14.3-32-32V32c0-17.7 14.3-32 32-32zM448 96c17.7 0 32 14.3 32 32V480c0 17.7-14.3 32-32 32s-32-14.3-32-32V128c0-17.7 14.3-32 32-32zM352 224V480c0 17.7-14.3 32-32 32s-32-14.3-32-32V224c0-17.7 14.3-32 32-32s32 14.3 32 32zM192 288c17.7 0 32 14.3 32 32V480c0 17.7-14.3 32-32 32s-32-14.3-32-32V320c0-17.7 14.3-32 32-32zM96 416v64c0 17.7-14.3 32-32 32s-32-14.3-32-32V416c0-17.7 14.3-32 32-32s32 14.3 32 32z\"/></svg>
-                        <div>
-                          <div class=\"text-muted small\">Segnale</div>
-                          <h4 class=\"mb-0\" id=\"signal-assessment\">-</h4>
-                          <small class=\"text-muted\">RSRP/RSRQ/SNR</small>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div class=\"col\">
-                  <div class=\"card bg-light border-0 h-100\">
-                    <div class=\"card-body\">
-                      <div class=\"d-flex align-items-center gap-3\">
-                        <svg class=\"card-icon\" viewBox=\"0 0 320 512\" fill=\"#fdb53c\" xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M160 64c-26.5 0-48 21.5-48 48V276.5c0 17.3-7.1 31.9-15.3 42.5C86.2 332.6 80 349.5 80 368c0 44.2 35.8 80 80 80s80-35.8 80-80c0-18.5-6.2-35.4-16.7-48.9c-8.2-10.6-15.3-25.2-15.3-42.5V112c0-26.5-21.5-48-48-48zM48 112C48 50.2 98.1 0 160 0s112 50.1 112 112V276.5c0 .1 .1 .3 .2 .6c.2 .6 .8 1.6 1.7 2.8c18.9 24.4 30.1 55 30.1 88.1c0 79.5-64.5 144-144 144S16 447.5 16 368c0-33.2 11.2-63.8 30.1-88.1c.9-1.2 1.5-2.2 1.7-2.8c.1-.3 .2-.5 .2-.6V112zM208 368c0 26.5-21.5 48-48 48s-48-21.5-48-48c0-20.9 13.4-38.7 32-45.3V272c0-8.8 7.2-16 16-16s16 7.2 16 16v50.7c18.6 6.6 32 24.4 32 45.3z\"/></svg>
-                        <div>
-                          <div class=\"text-muted small\">Temperatura</div>
-                          <h4 class=\"mb-0\" id=\"temperature\">-</h4>
-                          <small class=\"text-muted\">TSENS / PA / Skin</small>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class=\"row g-3 mt-1\">
-                <div class=\"col-12\">
-                  <div class=\"card border-0 bg-dim\">
-                    <div class=\"card-body\">
-                      <div class=\"d-flex justify-content-between align-items-center mb-2\">
-                        <h6 class=\"mb-0\">Informazioni rete</h6>
-                        <span class=\"status-pill text-bg-light\" id=\"rat-pill\">-</span>
-                      </div>
-                      <div class=\"table-responsive\">
-                        <table class=\"table table-sm align-middle mb-0 signal-table\">
-                          <tbody>
-                            <tr><th>Operatore</th><td id=\"network-provider\">-</td></tr>
-                            <tr><th>MCC/MNC</th><td id=\"mccmnc\">-</td></tr>
-                            <tr><th>Band</th><td id=\"bands\">-</td></tr>
-                            <tr><th>EARFCN/NRARFCN</th><td id=\"earfcn\">-</td></tr>
-                            <tr><th>PCI</th><td id=\"pci\">-</td></tr>
-                            <tr><th>Cell ID</th><td id=\"cell-id\">-</td></tr>
-                            <tr><th>TAC</th><td id=\"tac\">-</td></tr>
-                            <tr><th>RSRP</th><td id=\"rsrp\">-</td></tr>
-                            <tr><th>RSRQ</th><td id=\"rsrq\">-</td></tr>
-                            <tr><th>SNR</th><td id=\"snr\">-</td></tr>
-                            <tr><th>RSSI</th><td id=\"rssi\">-</td></tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div class=\"mt-3\">
-                <h6 class=\"text-muted\">Ultimi output AT</h6>
-                <pre class=\"bg-white rounded border p-2 small\" id=\"raw-debug\" style=\"max-height: 200px; overflow:auto;\"></pre>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </main>
+    <div id="terminal-panel" class="panel hidden">
+      <h2>Terminale AT</h2>
+      <div id="terminal" aria-live="polite"></div>
+      <label>Comando AT
+        <input id="command-input" placeholder="ATI" />
+        <span class="info-text">Esempi: ATI, AT+CPIN?, AT+CSQ, AT+COPS?</span>
+      </label>
+      <button id="send-button">Invia</button>
+      <button id="disconnect-button" style="background: #dc3545;">Disconnetti</button>
+    </div>
 
     <script>
       const form = document.getElementById('connection-form');
       const statusEl = document.getElementById('status');
       const debugLog = document.getElementById('debug-log');
+      const terminalPanel = document.getElementById('terminal-panel');
       const terminal = document.getElementById('terminal');
       const commandInput = document.getElementById('command-input');
       const sendButton = document.getElementById('send-button');
       const disconnectButton = document.getElementById('disconnect-button');
       const connectButton = document.getElementById('connect-button');
-      const connectionBadge = document.getElementById('connection-badge');
-      const refreshButton = document.getElementById('refresh-button');
-      const autoRefresh = document.getElementById('auto-refresh');
-      const rawDebug = document.getElementById('raw-debug');
       let sessionToken = null;
-      let autoTimer = null;
 
       function log(message) {
         console.log(message);
-        debugLog.classList.remove('d-none');
+        debugLog.classList.remove('hidden');
         const time = new Date().toLocaleTimeString();
         debugLog.textContent += time + ': ' + message + '\\n';
         debugLog.scrollTop = debugLog.scrollHeight;
       }
 
-      function showStatus(message, type = 'info') {
-        statusEl.classList.remove('d-none', 'alert-success', 'alert-danger', 'alert-info');
-        const map = { success: 'alert-success', error: 'alert-danger', info: 'alert-info' };
-        statusEl.classList.add(map[type] || 'alert-info');
+      function showStatus(message, type) {
+        statusEl.classList.remove('hidden', 'error', 'success', 'info');
+        statusEl.classList.add(type);
         statusEl.textContent = message;
         log('Status: ' + message);
       }
 
       function appendTerminal(text, isError) {
-        const color = isError ? '#ff8585' : '#3dff8f';
-        const line = document.createElement('div');
+        const color = isError ? '#f00' : '#0f0';
+        const line = document.createElement('span');
         line.style.color = color;
-        line.textContent = text;
+        line.textContent = text + '\\n';
         terminal.appendChild(line);
         terminal.scrollTop = terminal.scrollHeight;
-      }
-
-      function setConnectedUI(connected) {
-        connectionBadge.textContent = connected ? 'Connesso' : 'Disconnesso';
-        connectionBadge.className = connected ? 'badge text-bg-success' : 'badge text-bg-secondary';
-        connectButton.disabled = connected;
       }
 
       async function handleConnect(event) {
@@ -309,12 +199,14 @@ HTML_PAGE = """<!doctype html>
         log('Payload preparato: ' + JSON.stringify(safePayload));
 
         try {
+          log('Invio richiesta a /connect...');
           const response = await fetch('/connect', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
           });
 
+          log('Risposta ricevuta, status: ' + response.status);
           const data = await response.json();
 
           if (!response.ok) {
@@ -324,12 +216,13 @@ HTML_PAGE = """<!doctype html>
           }
 
           sessionToken = data.token;
-          setConnectedUI(true);
           showStatus('Connessione stabilita!', 'success');
+          terminalPanel.classList.remove('hidden');
+
           appendTerminal('=== Sessione pronta (comandi via /interface lte at-chat) ===');
-          appendTerminal((data.preview || '').trim() || '(nessun output)');
+          appendTerminal(data.preview.trim());
           commandInput.focus();
-          await fetchSignals();
+
         } catch (error) {
           log('ERRORE durante fetch: ' + error.message);
           console.error('Errore completo:', error);
@@ -338,8 +231,16 @@ HTML_PAGE = """<!doctype html>
         }
       }
 
-      connectButton.addEventListener('click', handleConnect);
-      form.addEventListener('submit', handleConnect);
+      connectButton.addEventListener('click', function(e) {
+        log('Click event ricevuto');
+        handleConnect(e);
+      });
+
+      form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        log('Form submit ricevuto');
+        handleConnect(e);
+      });
 
       commandInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
@@ -373,7 +274,7 @@ HTML_PAGE = """<!doctype html>
             return;
           }
 
-          appendTerminal((data.output || '').trim());
+          appendTerminal(data.output.trim());
 
         } catch (error) {
           log('ERRORE durante invio comando: ' + error.message);
@@ -400,72 +301,14 @@ HTML_PAGE = """<!doctype html>
           console.error(error);
         }
 
+        terminalPanel.classList.add('hidden');
         terminal.innerHTML = '';
         showStatus('Sessione terminata', 'info');
         sessionToken = null;
-        setConnectedUI(false);
-        if (autoTimer) {
-          clearInterval(autoTimer);
-          autoRefresh.checked = false;
-          autoTimer = null;
-        }
+        connectButton.disabled = false;
       });
 
-      refreshButton.addEventListener('click', fetchSignals);
-      autoRefresh.addEventListener('change', function() {
-        if (!sessionToken) {
-          autoRefresh.checked = false;
-          return;
-        }
-        if (autoRefresh.checked) {
-          autoTimer = setInterval(fetchSignals, 10000);
-        } else if (autoTimer) {
-          clearInterval(autoTimer);
-          autoTimer = null;
-        }
-      });
-
-      async function fetchSignals() {
-        if (!sessionToken) return;
-        refreshButton.disabled = true;
-        try {
-          const response = await fetch('/signals', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: sessionToken })
-          });
-          const data = await response.json();
-          if (!response.ok) {
-            showStatus('Errore segnali: ' + (data.error || 'richiesta fallita'), 'error');
-            return;
-          }
-          renderSignals(data.parsed || {});
-          rawDebug.textContent = (data.raw || '').trim();
-        } catch (error) {
-          showStatus('Errore segnali: ' + error.message, 'error');
-        } finally {
-          refreshButton.disabled = false;
-        }
-      }
-
-      function renderSignals(parsed) {
-        document.getElementById('signal-assessment').textContent = parsed.signal_assessment || '-';
-        document.getElementById('temperature').textContent = parsed.temperature || '-';
-        document.getElementById('network-provider').textContent = parsed.operator || '-';
-        document.getElementById('mccmnc').textContent = parsed.mccmnc || '-';
-        document.getElementById('bands').textContent = parsed.bands || '-';
-        document.getElementById('earfcn').textContent = parsed.channel || '-';
-        document.getElementById('pci').textContent = parsed.pci || '-';
-        document.getElementById('cell-id').textContent = parsed.cell_id || '-';
-        document.getElementById('tac').textContent = parsed.tac || '-';
-        document.getElementById('rsrp').textContent = parsed.rsrp || '-';
-        document.getElementById('rsrq').textContent = parsed.rsrq || '-';
-        document.getElementById('snr').textContent = parsed.snr || '-';
-        document.getElementById('rssi').textContent = parsed.rssi || '-';
-        const ratPill = document.getElementById('rat-pill');
-        ratPill.textContent = parsed.rat || '-';
-        ratPill.className = 'status-pill text-bg-' + (parsed.rat === 'NR5G_SA' || parsed.rat === 'LTE+NR' ? 'success' : 'light');
-      }
+      log('Pagina caricata, JavaScript attivo');
     </script>
   </body>
 </html>
@@ -480,15 +323,6 @@ def _mask_password(password: str) -> str:
     return f"{password[0]}***{password[-1]} (len={len(password)})"
 
 
-def _run_at_command(session: SSHSession, at_cmd: str, timeout: int = 20) -> str:
-    ros_cmd = _build_ros_at_chat_cmd(session.interface, at_cmd)
-    logger.debug("Esecuzione AT via SSH (%s): %s", at_cmd, ros_cmd)
-    with session.lock:
-        out, err = _run_ros_cmd(session.client, ros_cmd, timeout=timeout)
-    text = (out or "") + ("\n" + err if err else "")
-    return text.strip()
-
-
 def _build_ros_at_chat_cmd(interface: str, at_cmd: str) -> str:
     """
     Wrappa un comando AT dentro RouterOS:
@@ -501,108 +335,6 @@ def _build_ros_at_chat_cmd(interface: str, at_cmd: str) -> str:
     clean = clean.replace("\\", "\\\\").replace('"', '\\"')
 
     return f'/interface lte at-chat {interface} input="{clean}"'
-
-
-def _parse_ati_output(text: str) -> Dict[str, str]:
-    parsed: Dict[str, str] = {}
-    for line in text.splitlines():
-        if ":" not in line:
-            continue
-        key, _, value = line.partition(":")
-        parsed[key.strip().lower()] = value.strip()
-    return parsed
-
-
-def _parse_temp_output(text: str) -> str:
-    parts = []
-    for label in ["TSENS", "PA", "Skin Sensor"]:
-        match = re.search(rf"{re.escape(label)}:\s*([+-]?\d+)C", text, re.IGNORECASE)
-        if match:
-            parts.append(f"{label}: {match.group(1)}°C")
-    return " | ".join(parts)
-
-
-def _parse_debug_output(text: str) -> Dict[str, str]:
-    info: Dict[str, str] = {
-        "rat": "-",
-        "mccmnc": "-",
-        "bands": "-",
-        "channel": "-",
-        "pci": "-",
-        "cell_id": "-",
-        "tac": "-",
-        "rsrp": "-",
-        "rsrq": "-",
-        "snr": "-",
-        "rssi": "-",
-    }
-
-    rat = re.search(r"RAT:([^\r\n]+)", text)
-    if rat:
-        info["rat"] = rat.group(1).strip()
-
-    mcc = re.search(r"mcc:(\d+)", text)
-    mnc = re.search(r"mnc:(\d+)", text)
-    if mcc and mnc:
-        info["mccmnc"] = f"{mcc.group(1)}/{mnc.group(1)}"
-
-    bands = re.findall(r"(?:lte_band|nr_band):([\w/+-]+)", text)
-    if bands:
-        info["bands"] = ", ".join(dict.fromkeys(bands))
-
-    channel = re.search(r"channel:(\d+)", text)
-    if channel:
-        info["channel"] = channel.group(1)
-
-    pci = re.search(r"pci:(\d+)", text)
-    if pci:
-        info["pci"] = pci.group(1)
-
-    cell = re.search(r"(lte_cell_id|nr_cell_id):(\d+)", text)
-    if cell:
-        info["cell_id"] = cell.group(2)
-
-    tac = re.search(r"(lte_tac|nr_tac):(\d+)", text)
-    if tac:
-        info["tac"] = tac.group(2)
-
-    rsrp = re.search(r"(?:lte_rsrp|nr_rsrp):\s*([-\d.]+dBm)", text)
-    if rsrp:
-        info["rsrp"] = rsrp.group(1)
-
-    rsrq = re.search(r"(?:rsrq|nr_rsrq):\s*([-\d.]+dB)", text)
-    if rsrq:
-        info["rsrq"] = rsrq.group(1)
-
-    snr = re.search(r"(?:lte_snr|nr_snr):\s*([-\d.]+dB)", text)
-    if snr:
-        info["snr"] = snr.group(1)
-
-    rssi = re.search(r"lte_rssi:([-\d.]+dBm)", text)
-    if rssi:
-        info["rssi"] = rssi.group(1)
-
-    return info
-
-
-def _assess_signal(rsrp: str, rsrq: str, snr: str) -> str:
-    try:
-        rsrp_val = float(rsrp.replace("dBm", "")) if rsrp.endswith("dBm") else None
-        rsrq_val = float(rsrq.replace("dB", "")) if rsrq.endswith("dB") else None
-        snr_val = float(snr.replace("dB", "")) if snr.endswith("dB") else None
-    except Exception:
-        return "-"
-
-    if rsrp_val is None:
-        return "-"
-
-    if rsrp_val >= -90 and (snr_val or 0) >= 10:
-        return "Ottimo"
-    if rsrp_val >= -105 and (rsrq_val or -40) >= -14:
-        return "Buono"
-    if rsrp_val >= -115:
-        return "Discreto"
-    return "Debole"
 
 
 def _run_ros_cmd(client: paramiko.SSHClient, ros_cmd: str, timeout: int = 12) -> Tuple[str, str]:
@@ -726,42 +458,6 @@ def send_command():
         return jsonify({"error": f"Comando fallito: {str(exc)}"}), 502
 
     return jsonify({"output": output})
-
-
-@app.route("/signals", methods=["POST"])
-def signals():
-    logger.info("Richiesta POST a /signals ricevuta")
-    data = request.get_json(force=True)
-    token = data.get("token")
-    if not token:
-        return jsonify({"error": "Token mancante"}), 400
-
-    session = sessions.get(token)
-    if not session:
-        return jsonify({"error": "Sessione non trovata o scaduta"}), 404
-
-    try:
-        ati_text = _run_at_command(session, "ATI", timeout=15)
-        debug_text = _run_at_command(session, "AT^DEBUG?", timeout=25)
-        temp_text = _run_at_command(session, "AT^TEMP?", timeout=15)
-    except Exception as exc:
-        logger.exception("Errore durante raccolta segnali")
-        return jsonify({"error": f"Comandi AT falliti: {str(exc)}"}), 502
-
-    info = _parse_debug_output(debug_text)
-    ati = _parse_ati_output(ati_text)
-
-    info["operator"] = ati.get("manufacturer", "") + (" " + ati.get("model", "") if ati.get("model") else "")
-    info["temperature"] = _parse_temp_output(temp_text)
-    info["signal_assessment"] = _assess_signal(info.get("rsrp", "-"), info.get("rsrq", "-"), info.get("snr", "-"))
-
-    raw = "\n\n".join([
-        "ATI\n" + ati_text,
-        "AT^DEBUG?\n" + debug_text,
-        "AT^TEMP?\n" + temp_text,
-    ])
-
-    return jsonify({"parsed": info, "raw": raw})
 
 
 @app.route("/disconnect", methods=["POST"])

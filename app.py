@@ -335,6 +335,7 @@ HTML_PAGE = """<!doctype html>
               <div class="d-flex gap-2">
                 <button class="btn btn-outline-secondary btn-sm" id="bands-refresh-button" type="button">Leggi bande</button>
                 <button class="btn btn-primary btn-sm" id="bands-save-button" type="button">Salva modifiche</button>
+                <button class="btn btn-outline-danger btn-sm" id="bands-reset-button" type="button">Reset bande</button>
               </div>
             </div>
 
@@ -421,6 +422,7 @@ HTML_PAGE = """<!doctype html>
       const bandsRaw = document.getElementById('bands-raw');
       const bandsRefreshButton = document.getElementById('bands-refresh-button');
       const bandsSaveButton = document.getElementById('bands-save-button');
+      const bandsResetButton = document.getElementById('bands-reset-button');
       const infoRefreshButton = document.getElementById('info-refresh');
       const infoStatus = document.getElementById('info-status');
       const infoRaw = document.getElementById('info-raw');
@@ -723,6 +725,7 @@ HTML_PAGE = """<!doctype html>
       });
       bandsRefreshButton.addEventListener('click', () => loadBandPreferences());
       bandsSaveButton.addEventListener('click', saveBandPreferences);
+      bandsResetButton.addEventListener('click', resetBandPreferences);
 
       resetBandsUI();
       resetInfoUI();
@@ -794,7 +797,9 @@ HTML_PAGE = """<!doctype html>
         const state = {};
         // Usa backslash doppi per evitare che le sequenze di escape diventino CR/LF reali nella pagina HTML
         const lines = (text || '').split(/\\r?\\n/);
-        lines.forEach(line => {
+        lines.forEach(rawLine => {
+          const line = rawLine.trim();
+          if (!line) return;
           const match = line.match(/^(WCDMA|LTE|NR5G_NSA|NR5G_SA),(Enable Bands|Disable Bands)\\s*:?(.*)$/i);
           if (!match) return;
           const tech = match[1].toUpperCase();
@@ -896,6 +901,7 @@ HTML_PAGE = """<!doctype html>
         }
         bandsRefreshButton.disabled = true;
         bandsSaveButton.disabled = true;
+        bandsResetButton.disabled = true;
         if (showMessage) {
           setBandsStatus('Lettura bande dal modem in corso...', 'info');
         }
@@ -919,6 +925,41 @@ HTML_PAGE = """<!doctype html>
         } catch (error) {
           setBandsStatus('Errore lettura bande: ' + error.message, 'error');
         } finally {
+          bandsRefreshButton.disabled = false;
+          bandsSaveButton.disabled = false;
+          bandsResetButton.disabled = false;
+        }
+      }
+
+      async function resetBandPreferences() {
+        if (!sessionToken) {
+          setBandsStatus('Connetti al modem per resettare le bande.', 'warning');
+          return;
+        }
+
+        bandsResetButton.disabled = true;
+        bandsRefreshButton.disabled = true;
+        bandsSaveButton.disabled = true;
+        setBandsStatus('Reset delle bande in corso...', 'info');
+
+        try {
+          const response = await fetch('/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: sessionToken, command: 'AT^BAND_PREF_EXT' })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.error || 'Comando AT rifiutato');
+          }
+
+          setBandsStatus('Bande ripristinate. Rilettura in corso...', 'success');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          await loadBandPreferences(false);
+        } catch (error) {
+          setBandsStatus('Errore reset bande: ' + error.message, 'error');
+        } finally {
+          bandsResetButton.disabled = false;
           bandsRefreshButton.disabled = false;
           bandsSaveButton.disabled = false;
         }

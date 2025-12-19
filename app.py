@@ -1198,8 +1198,23 @@ def _parse_ati_output(text: str) -> Dict[str, str]:
     }
 
     for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or line.upper() == "OK" or ":" not in line:
+        sanitized = "".join(ch for ch in raw_line if ch.isprintable() or ch in "\t")
+        line = sanitized.strip()
+        if not line or line.upper() == "OK":
+            continue
+
+        match = re.match(
+            r"^(?P<key>\+?(manufacturer|model|revision|svn|imei|gcap|mpn))\s*[:=]?\s*(?P<value>.*)$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            key = match.group("key").lstrip("+").strip().lower()
+            value = match.group("value").strip() or "-"
+            parsed[key] = value
+            continue
+
+        if ":" not in line:
             continue
 
         key, value = line.split(":", 1)

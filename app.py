@@ -436,6 +436,7 @@ HTML_PAGE = """<!doctype html>
         gcap: document.getElementById('info-gcap'),
         mpn: document.getElementById('info-mpn'),
       };
+      const STORAGE_KEY = 'rsm-ssh-settings';
       let sessionToken = null;
       let autoTimer = null;
       let currentBands = {};
@@ -453,6 +454,36 @@ HTML_PAGE = """<!doctype html>
         NR5G_SA: ['1', '2', '3', '5', '7', '8', '12', '20', '25', '28', '38', '40', '41', '48', '66', '71', '77', '78', '79'],
       };
 
+      function loadSavedSettings() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw) return;
+          const saved = JSON.parse(raw);
+          if (saved.host) form.host.value = saved.host;
+          if (saved.username) form.username.value = saved.username;
+          if (saved.password) form.password.value = saved.password;
+          if (saved.port) form.port.value = saved.port;
+          if (saved.interface) form.interface.value = saved.interface;
+        } catch (error) {
+          console.warn('Impossibile caricare le impostazioni salvate', error);
+        }
+      }
+
+      function persistSettingsFromForm(data) {
+        try {
+          const payload = data || {
+            host: form.host.value.trim(),
+            username: form.username.value.trim(),
+            password: form.password.value,
+            port: form.port.value,
+            interface: form.interface.value.trim(),
+          };
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+        } catch (error) {
+          console.warn('Impossibile salvare le impostazioni', error);
+        }
+      }
+
       mainTabs.addEventListener('click', (event) => {
         if (event.target.tagName !== 'BUTTON') return;
         const target = event.target.getAttribute('data-target');
@@ -467,6 +498,15 @@ HTML_PAGE = """<!doctype html>
         if (target === 'info') {
           fetchModemInfo(!modemInfoLoaded);
         }
+      });
+
+      loadSavedSettings();
+
+      ['host', 'username', 'password', 'port', 'interface'].forEach(name => {
+        const input = form.elements[name];
+        if (!input) return;
+        input.addEventListener('change', () => persistSettingsFromForm());
+        input.addEventListener('blur', () => persistSettingsFromForm());
       });
 
       const percentageCalculators = {
@@ -609,6 +649,8 @@ HTML_PAGE = """<!doctype html>
         const formData = new FormData(form);
         const payload = Object.fromEntries(formData.entries());
         payload.port = Number(payload.port || 22);
+
+        persistSettingsFromForm(payload);
 
         const safePayload = Object.assign({}, payload, {password: '***'});
         log('Payload preparato: ' + JSON.stringify(safePayload));

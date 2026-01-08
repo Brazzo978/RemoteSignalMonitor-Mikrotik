@@ -308,6 +308,24 @@ HTML_PAGE = """<!doctype html>
                           <tr><th>EARFCN/NRARFCN</th><td id="earfcn">-</td></tr>
                           <tr><th>PCI</th><td id="pci">-</td></tr>
                           <tr><th>Cell ID</th><td id="cell-id">-</td></tr>
+                          <tr>
+                            <th>eNB LTE</th>
+                            <td>
+                              <span id="enb-lte">-</span>
+                              <a
+                                id="enb-link"
+                                class="btn btn-sm btn-outline-primary ms-2 d-none"
+                                href="#"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label="Apri scheda BTS su lteitaly.it"
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512" width="14" height="14" fill="currentColor" aria-hidden="true">
+                                  <path d="M0 64C0 46.3 14.3 32 32 32H192c17.7 0 32 14.3 32 32s-14.3 32-32 32H109.3l155.4 155.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L64 141.3V224c0 17.7-14.3 32-32 32s-32-14.3-32-32V64zM448 64c0-17.7 14.3-32 32-32H608c17.7 0 32 14.3 32 32V192c0 17.7-14.3 32-32 32s-32-14.3-32-32V109.3L420.6 264.7c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L530.7 64H448c-17.7 0-32-14.3-32-32zM192 288c17.7 0 32 14.3 32 32v82.7l155.4-155.4c12.5-12.5 32.8-12.5 45.3 0s12.5 32.8 0 45.3L269.3 448H352c17.7 0 32 14.3 32 32s-14.3 32-32 32H192c-17.7 0-32-14.3-32-32V320c0-17.7 14.3-32 32-32zm416 0c17.7 0 32 14.3 32 32v160c0 17.7-14.3 32-32 32H448c-17.7 0-32-14.3-32-32s14.3-32 32-32h82.7L375.3 292.7c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0L576 402.7V320c0-17.7 14.3-32 32-32z"/>
+                                </svg>
+                              </a>
+                            </td>
+                          </tr>
                           <tr><th>TAC</th><td id="tac">-</td></tr>
                           <tr><th>RSRP</th><td id="rsrp">-</td></tr>
                           <tr><th>RSRQ</th><td id="rsrq">-</td></tr>
@@ -1530,6 +1548,22 @@ HTML_PAGE = """<!doctype html>
         document.getElementById('earfcn').textContent = parsed.channels || parsed.channel || '-';
         document.getElementById('pci').textContent = parsed.pci || '-';
         document.getElementById('cell-id').textContent = parsed.cell_id || '-';
+        const enbValue = getEnbValue(parsed.cell_id);
+        const enbEl = document.getElementById('enb-lte');
+        if (enbEl) {
+          enbEl.textContent = enbValue || '-';
+        }
+        const enbLink = document.getElementById('enb-link');
+        const lteItalyLink = buildLteItalyLink(parsed.mccmnc, enbValue);
+        if (enbLink) {
+          if (lteItalyLink) {
+            enbLink.href = lteItalyLink;
+            enbLink.classList.remove('d-none');
+          } else {
+            enbLink.href = '#';
+            enbLink.classList.add('d-none');
+          }
+        }
         document.getElementById('tac').textContent = parsed.tac || '-';
         document.getElementById('rsrp').textContent = parsed.rsrp || '-';
         document.getElementById('rsrq').textContent = parsed.rsrq || '-';
@@ -1549,6 +1583,28 @@ HTML_PAGE = """<!doctype html>
         updateMeter('rssi', parsed.rssi || '-', percentageCalculators.rssi(rssiVal));
 
         renderAdvanced(parsed.advanced || []);
+      }
+
+      function getEnbValue(cellIdValue) {
+        const cellId = Number.parseInt(String(cellIdValue || '').trim(), 10);
+        if (Number.isNaN(cellId) || cellId <= 0) {
+          return '';
+        }
+        return String(Math.floor(cellId / 256));
+      }
+
+      function buildLteItalyLink(mccmncValue, enbValue) {
+        const enb = String(enbValue || '').trim();
+        if (!/^\\d+$/.test(enb)) {
+          return '';
+        }
+        const raw = String(mccmncValue || '');
+        const match = raw.match(/(\\d+)\\s*\\/\\s*(\\d+)/);
+        const mccmnc = match ? `${match[1]}${match[2]}` : raw.replace(/\\D/g, '');
+        if (!/^\\d{5,6}$/.test(mccmnc)) {
+          return '';
+        }
+        return `https://lteitaly.it/it/internal/map.php#bts=${mccmnc}.${enb}`;
       }
 
       function renderAdvanced(details) {

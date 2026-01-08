@@ -128,6 +128,7 @@ HTML_PAGE = """<!doctype html>
             <li class="nav-item"><button class="nav-link" data-target="terminale" type="button">Terminale</button></li>
             <li class="nav-item"><button class="nav-link" data-target="segnali" type="button">Segnali</button></li>
             <li class="nav-item"><button class="nav-link" data-target="bande" type="button">Bande</button></li>
+            <li class="nav-item"><button class="nav-link" data-target="lock" type="button">Lock</button></li>
             <li class="nav-item"><button class="nav-link" data-target="info" type="button">Info</button></li>
           </ul>
         </div>
@@ -350,6 +351,72 @@ HTML_PAGE = """<!doctype html>
             <pre id="bands-raw" class="bg-dim p-2 small rounded d-none mt-3" style="max-height: 220px; overflow:auto;"></pre>
           </div>
 
+          <div class="tab-pane" data-tab="lock">
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+              <div>
+                <h5 class="panel-title mb-1">Lock celle</h5>
+                <p class="text-muted mb-0">Gestisci il blocco su LTE o 5G SA. Il lock non funziona in NSA.</p>
+              </div>
+              <div class="d-flex gap-2">
+                <button class="btn btn-outline-secondary btn-sm" id="lock-refresh-button" type="button">Leggi stato</button>
+                <button class="btn btn-outline-danger btn-sm" id="lock-unlock-button" type="button">Unlock all</button>
+              </div>
+            </div>
+
+            <div id="lock-status" class="alert alert-info d-none mt-3"></div>
+
+            <div class="row g-3 mt-1">
+              <div class="col-lg-6">
+                <div class="card border-0 shadow-sm h-100">
+                  <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                      <div>
+                        <h6 class="fw-semibold mb-1">Lock LTE</h6>
+                        <small class="text-muted">PCI + EARFCN (fino a 8 coppie).</small>
+                      </div>
+                      <button class="btn btn-sm btn-outline-secondary" type="button" id="lock-lte-add">Aggiungi cella</button>
+                    </div>
+                    <div id="lock-lte-container" class="mt-3 d-flex flex-column gap-2"></div>
+                    <div class="d-flex justify-content-end mt-3">
+                      <button class="btn btn-primary btn-sm" type="button" id="lock-lte-apply">Applica lock LTE</button>
+                    </div>
+                    <small class="text-muted d-block mt-2">Per rendere effettivo il lock serve un riavvio del modem.</small>
+                  </div>
+                </div>
+              </div>
+              <div class="col-lg-6">
+                <div class="card border-0 shadow-sm h-100">
+                  <div class="card-body">
+                    <h6 class="fw-semibold mb-1">Lock 5G SA</h6>
+                    <small class="text-muted">Band, SCS, NR-ARFCN e PCI (solo 5G SA).</small>
+                    <div class="row g-2 mt-3">
+                      <div class="col-md-6">
+                        <label class="form-label small fw-semibold">Band</label>
+                        <input class="form-control" id="lock-nr-band" placeholder="78" />
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label small fw-semibold">SCS</label>
+                        <input class="form-control" id="lock-nr-scs" placeholder="1" />
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label small fw-semibold">NR-ARFCN</label>
+                        <input class="form-control" id="lock-nr-arfcn" placeholder="627264" />
+                      </div>
+                      <div class="col-md-6">
+                        <label class="form-label small fw-semibold">PCI</label>
+                        <input class="form-control" id="lock-nr-pci" placeholder="148" />
+                      </div>
+                    </div>
+                    <div class="d-flex justify-content-end mt-3">
+                      <button class="btn btn-primary btn-sm" type="button" id="lock-nr-apply">Applica lock 5G SA</button>
+                    </div>
+                    <small class="text-muted d-block mt-2">Il lock 5G funziona solo in modalità SA, non in NSA.</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div class="tab-pane" data-tab="info">
             <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
               <div>
@@ -423,6 +490,17 @@ HTML_PAGE = """<!doctype html>
       const bandsRefreshButton = document.getElementById('bands-refresh-button');
       const bandsSaveButton = document.getElementById('bands-save-button');
       const bandsResetButton = document.getElementById('bands-reset-button');
+      const lockRefreshButton = document.getElementById('lock-refresh-button');
+      const lockUnlockButton = document.getElementById('lock-unlock-button');
+      const lockStatus = document.getElementById('lock-status');
+      const lockLteContainer = document.getElementById('lock-lte-container');
+      const lockLteAddButton = document.getElementById('lock-lte-add');
+      const lockLteApplyButton = document.getElementById('lock-lte-apply');
+      const lockNrApplyButton = document.getElementById('lock-nr-apply');
+      const lockNrBand = document.getElementById('lock-nr-band');
+      const lockNrScs = document.getElementById('lock-nr-scs');
+      const lockNrArfcn = document.getElementById('lock-nr-arfcn');
+      const lockNrPci = document.getElementById('lock-nr-pci');
       const infoRefreshButton = document.getElementById('info-refresh');
       const infoStatus = document.getElementById('info-status');
       const infoRaw = document.getElementById('info-raw');
@@ -441,6 +519,7 @@ HTML_PAGE = """<!doctype html>
       let autoTimer = null;
       let currentBands = {};
       let modemInfoLoaded = false;
+      let lockState = { lte: { locked: false, pairs: [] }, nr: { locked: false, data: null }, locked: false };
       const bandTechnologies = [
         { key: 'WCDMA', label: 'WCDMA', hint: 'Bande 3G' },
         { key: 'LTE', label: 'LTE', hint: 'Bande 4G' },
@@ -494,6 +573,9 @@ HTML_PAGE = """<!doctype html>
         if (pane) pane.classList.add('active');
         if (target === 'bande' && sessionToken && !Object.keys(currentBands).length) {
           loadBandPreferences(false);
+        }
+        if (target === 'lock') {
+          loadLockStatus(true);
         }
         if (target === 'info') {
           fetchModemInfo(!modemInfoLoaded);
@@ -679,6 +761,7 @@ HTML_PAGE = """<!doctype html>
           autoRefresh.checked = true;
           enforceIntervalBounds();
           await fetchSignals();
+          await loadLockStatus(false);
           syncAutoRefreshState();
         } catch (error) {
           log('ERRORE durante fetch: ' + error.message);
@@ -755,6 +838,7 @@ HTML_PAGE = """<!doctype html>
           autoTimer = null;
         }
         resetBandsUI();
+        resetLockUI();
         resetInfoUI();
       });
 
@@ -768,8 +852,14 @@ HTML_PAGE = """<!doctype html>
       bandsRefreshButton.addEventListener('click', () => loadBandPreferences());
       bandsSaveButton.addEventListener('click', saveBandPreferences);
       bandsResetButton.addEventListener('click', resetBandPreferences);
+      lockRefreshButton.addEventListener('click', () => loadLockStatus(true));
+      lockUnlockButton.addEventListener('click', unlockAllLocks);
+      lockLteAddButton.addEventListener('click', () => addLteLockRow());
+      lockLteApplyButton.addEventListener('click', applyLteLock);
+      lockNrApplyButton.addEventListener('click', applyNrLock);
 
       resetBandsUI();
+      resetLockUI();
       resetInfoUI();
 
       function enforceIntervalBounds() {
@@ -833,6 +923,306 @@ HTML_PAGE = """<!doctype html>
         infoRaw.textContent = '';
         infoLastUpdate.textContent = '-';
         setInfoStatus('In attesa di una connessione per leggere le info modem.', 'info');
+      }
+
+      function setLockStatus(message, type = 'info') {
+        if (!message) {
+          lockStatus.classList.add('d-none');
+          lockStatus.textContent = '';
+          return;
+        }
+        lockStatus.classList.remove('d-none', 'alert-success', 'alert-danger', 'alert-info', 'alert-warning');
+        const map = { success: 'alert-success', error: 'alert-danger', warning: 'alert-warning', info: 'alert-info' };
+        lockStatus.classList.add(map[type] || 'alert-info');
+        lockStatus.textContent = message;
+      }
+
+      function resetLockUI() {
+        lockState = { lte: { locked: false, pairs: [] }, nr: { locked: false, data: null }, locked: false };
+        lockLteContainer.innerHTML = '';
+        addLteLockRow();
+        lockNrBand.value = '';
+        lockNrScs.value = '';
+        lockNrArfcn.value = '';
+        lockNrPci.value = '';
+        setLockStatus('In attesa di una connessione per leggere lo stato lock.', 'info');
+        lockRefreshButton.disabled = true;
+        toggleLockControls(false, false);
+      }
+
+      function toggleLockControls(locked, connected = true) {
+        const disabled = locked || !connected;
+        lockLteAddButton.disabled = disabled;
+        lockLteApplyButton.disabled = disabled;
+        lockNrApplyButton.disabled = disabled;
+        lockUnlockButton.disabled = !locked || !connected;
+        lockLteContainer.querySelectorAll('input, button').forEach(input => {
+          if (input.classList.contains('lock-row-remove')) {
+            input.disabled = disabled;
+            return;
+          }
+          input.disabled = disabled;
+        });
+        [lockNrBand, lockNrScs, lockNrArfcn, lockNrPci].forEach(input => {
+          input.disabled = disabled;
+        });
+      }
+
+      function addLteLockRow(pci = '', earfcn = '') {
+        const currentCount = lockLteContainer.querySelectorAll('.lock-lte-pci').length;
+        if (currentCount >= 8) {
+          setLockStatus('Puoi inserire al massimo 8 coppie PCI/EARFCN.', 'warning');
+          return;
+        }
+        const row = document.createElement('div');
+        row.className = 'd-flex align-items-end gap-2';
+        row.innerHTML = `
+          <div class="flex-grow-1">
+            <label class="form-label small fw-semibold">PCI</label>
+            <input class="form-control lock-lte-pci" placeholder="405" value="${pci}">
+          </div>
+          <div class="flex-grow-1">
+            <label class="form-label small fw-semibold">EARFCN</label>
+            <input class="form-control lock-lte-earfcn" placeholder="40936" value="${earfcn}">
+          </div>
+          <div>
+            <button class="btn btn-outline-secondary btn-sm lock-row-remove" type="button">Rimuovi</button>
+          </div>
+        `;
+        const removeButton = row.querySelector('.lock-row-remove');
+        removeButton.addEventListener('click', () => {
+          row.remove();
+          if (!lockLteContainer.querySelector('.lock-lte-pci')) {
+            addLteLockRow();
+          }
+        });
+        lockLteContainer.appendChild(row);
+      }
+
+      function renderLteLockPairs(pairs, locked) {
+        lockLteContainer.innerHTML = '';
+        if (!pairs.length) {
+          addLteLockRow();
+        } else {
+          pairs.forEach(pair => addLteLockRow(pair.pci, pair.earfcn));
+        }
+        if (locked) {
+          lockLteContainer.querySelectorAll('input, button').forEach(el => {
+            el.disabled = true;
+          });
+        }
+      }
+
+      function parseLteLockResponse(output) {
+        const lines = (output || '').split(/\\r?\\n/).map(line => line.trim()).filter(Boolean);
+        const line = lines.find(item => item.toUpperCase().includes('LTE_LOCK') && !item.toUpperCase().startsWith('AT^')) || '';
+        if (!line || /have not set cell lock before/i.test(line)) {
+          return { locked: false, pairs: [] };
+        }
+        const numbers = line.match(/\\d+/g) || [];
+        const pairs = [];
+        for (let i = 0; i + 1 < numbers.length; i += 2) {
+          pairs.push({ pci: numbers[i], earfcn: numbers[i + 1] });
+        }
+        return { locked: pairs.length > 0, pairs };
+      }
+
+      function parseNrLockResponse(output) {
+        const lines = (output || '').split(/\\r?\\n/).map(line => line.trim()).filter(Boolean);
+        const line = lines.find(item => item.toUpperCase().includes('NR5G_LOCK') && !item.toUpperCase().startsWith('AT^')) || '';
+        if (!line || /have not set cell lock before/i.test(line)) {
+          return { locked: false, data: null };
+        }
+        const numbers = line.match(/\\d+/g) || [];
+        if (numbers.length < 4) {
+          return { locked: false, data: null };
+        }
+        return {
+          locked: true,
+          data: { band: numbers[0], scs: numbers[1], arfcn: numbers[2], pci: numbers[3] },
+        };
+      }
+
+      function applyLockState(state) {
+        lockState = state;
+        renderLteLockPairs(state.lte.pairs || [], state.locked);
+        if (state.nr.data) {
+          lockNrBand.value = state.nr.data.band || '';
+          lockNrScs.value = state.nr.data.scs || '';
+          lockNrArfcn.value = state.nr.data.arfcn || '';
+          lockNrPci.value = state.nr.data.pci || '';
+        } else {
+          lockNrBand.value = '';
+          lockNrScs.value = '';
+          lockNrArfcn.value = '';
+          lockNrPci.value = '';
+        }
+        toggleLockControls(state.locked);
+        if (state.locked) {
+          setLockStatus('Lock attivo: per modificarlo usa solo "Unlock all".', 'warning');
+        } else {
+          setLockStatus('Nessun lock attivo. Puoi applicare un lock LTE o 5G SA.', 'success');
+        }
+      }
+
+      async function loadLockStatus(showMessage = true) {
+        if (!sessionToken) {
+          setLockStatus('Connetti il modem per leggere lo stato lock.', 'warning');
+          return;
+        }
+        lockRefreshButton.disabled = true;
+        if (showMessage) {
+          setLockStatus('Lettura stato lock in corso...', 'info');
+        }
+        try {
+          const lteResponse = await fetch('/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: sessionToken, command: 'AT^LTE_LOCK?' })
+          });
+          const lteData = await lteResponse.json();
+          if (!lteResponse.ok) {
+            throw new Error(lteData.error || 'Lettura LTE lock fallita');
+          }
+
+          const nrResponse = await fetch('/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: sessionToken, command: 'AT^NR5G_LOCK?' })
+          });
+          const nrData = await nrResponse.json();
+          if (!nrResponse.ok) {
+            throw new Error(nrData.error || 'Lettura NR5G lock fallita');
+          }
+
+          const lteState = parseLteLockResponse(lteData.output || '');
+          const nrState = parseNrLockResponse(nrData.output || '');
+          applyLockState({
+            lte: lteState,
+            nr: nrState,
+            locked: lteState.locked || nrState.locked,
+          });
+        } catch (error) {
+          setLockStatus('Errore lettura lock: ' + error.message, 'error');
+        } finally {
+          lockRefreshButton.disabled = false;
+        }
+      }
+
+      function collectLtePairs() {
+        const pairs = [];
+        const pciInputs = lockLteContainer.querySelectorAll('.lock-lte-pci');
+        const earfcnInputs = lockLteContainer.querySelectorAll('.lock-lte-earfcn');
+        pciInputs.forEach((input, index) => {
+          const pci = (input.value || '').trim();
+          const earfcn = (earfcnInputs[index]?.value || '').trim();
+          if (pci || earfcn) {
+            pairs.push({ pci, earfcn });
+          }
+        });
+        return pairs;
+      }
+
+      async function applyLteLock() {
+        if (!sessionToken) {
+          setLockStatus('Connetti il modem per applicare il lock LTE.', 'warning');
+          return;
+        }
+        const pairs = collectLtePairs();
+        if (!pairs.length) {
+          setLockStatus('Inserisci almeno una coppia PCI/EARFCN.', 'warning');
+          return;
+        }
+        const invalid = pairs.find(pair => !pair.pci || !pair.earfcn);
+        if (invalid) {
+          setLockStatus('Completa tutti i campi PCI/EARFCN prima di inviare.', 'warning');
+          return;
+        }
+        const values = pairs.flatMap(pair => [pair.pci, pair.earfcn]);
+        const command = `AT^LTE_LOCK=${values.join(',')}`;
+        lockLteApplyButton.disabled = true;
+        setLockStatus('Invio lock LTE in corso...', 'info');
+        try {
+          const response = await fetch('/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: sessionToken, command })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.error || 'Lock LTE fallito');
+          }
+          setLockStatus('Lock LTE inviato. Riavvia il modem per applicarlo.', 'success');
+          await loadLockStatus(false);
+        } catch (error) {
+          setLockStatus('Errore lock LTE: ' + error.message, 'error');
+        } finally {
+          lockLteApplyButton.disabled = false;
+        }
+      }
+
+      async function applyNrLock() {
+        if (!sessionToken) {
+          setLockStatus('Connetti il modem per applicare il lock 5G SA.', 'warning');
+          return;
+        }
+        const band = lockNrBand.value.trim();
+        const scs = lockNrScs.value.trim();
+        const arfcn = lockNrArfcn.value.trim();
+        const pci = lockNrPci.value.trim();
+        if (!band || !scs || !arfcn || !pci) {
+          setLockStatus('Compila band, SCS, NR-ARFCN e PCI per il lock 5G SA.', 'warning');
+          return;
+        }
+        const command = `AT^NR5G_LOCK=${band},${scs},${arfcn},${pci}`;
+        lockNrApplyButton.disabled = true;
+        setLockStatus('Invio lock 5G SA in corso...', 'info');
+        try {
+          const response = await fetch('/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: sessionToken, command })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.error || 'Lock 5G SA fallito');
+          }
+          setLockStatus('Lock 5G SA inviato. Riavvia il modem per applicarlo.', 'success');
+          await loadLockStatus(false);
+        } catch (error) {
+          setLockStatus('Errore lock 5G SA: ' + error.message, 'error');
+        } finally {
+          lockNrApplyButton.disabled = false;
+        }
+      }
+
+      async function unlockAllLocks() {
+        if (!sessionToken) {
+          setLockStatus('Connetti il modem per rimuovere i lock.', 'warning');
+          return;
+        }
+        lockUnlockButton.disabled = true;
+        setLockStatus('Rimozione lock in corso...', 'info');
+        try {
+          const commands = ['AT^LTE_LOCK', 'AT^NR5G_LOCK'];
+          for (const command of commands) {
+            const response = await fetch('/send', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token: sessionToken, command })
+            });
+            const data = await response.json();
+            if (!response.ok) {
+              throw new Error(data.error || 'Unlock fallito');
+            }
+          }
+          setLockStatus('Lock rimossi. Riavvia il modem per applicare le modifiche.', 'success');
+          await loadLockStatus(false);
+        } catch (error) {
+          setLockStatus('Errore unlock: ' + error.message, 'error');
+        } finally {
+          lockUnlockButton.disabled = false;
+        }
       }
 
       function parseBandResponse(text) {

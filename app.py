@@ -1,3 +1,4 @@
+import csv
 import logging
 import secrets
 import threading
@@ -19,6 +20,7 @@ class SSHSession:
     host: str
     username: str
     port: int
+    modem_mode: str
     created_at: float
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -28,7 +30,15 @@ class SessionStore:
         self._sessions: Dict[str, SSHSession] = {}
         self._lock = threading.Lock()
 
-    def add(self, client: paramiko.SSHClient, interface: str, host: str, username: str, port: int) -> SSHSession:
+    def add(
+        self,
+        client: paramiko.SSHClient,
+        interface: str,
+        host: str,
+        username: str,
+        port: int,
+        modem_mode: str,
+    ) -> SSHSession:
         token = secrets.token_urlsafe(32)
         session = SSHSession(
             token=token,
@@ -37,6 +47,7 @@ class SessionStore:
             host=host,
             username=username,
             port=port,
+            modem_mode=modem_mode,
             created_at=time.time(),
         )
         with self._lock:
@@ -157,6 +168,15 @@ HTML_PAGE = """<!doctype html>
                 <input class="form-control" name="interface" required placeholder="lte1" value="lte1" />
                 <small class="text-muted">Nome dell'interfaccia LTE sul router</small>
               </div>
+              <div class="col-12">
+                <label class="form-label fw-semibold">Modalità modem</label>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="modem-mode-switch" />
+                  <input type="hidden" name="modem_mode" id="modem-mode-input" value="FOX" />
+                  <label class="form-check-label" for="modem-mode-switch" id="modem-mode-label">FOX (T99W175)</label>
+                </div>
+                <small class="text-muted">Attiva Quectel per usare AT+QENG e parser dedicato.</small>
+              </div>
               <div class="col-12 d-flex gap-2">
                 <button type="button" class="btn btn-primary flex-grow-1" id="connect-button">Connetti</button>
                 <button type="button" class="btn btn-outline-danger" id="disconnect-button">Disconnetti</button>
@@ -185,7 +205,7 @@ HTML_PAGE = """<!doctype html>
             <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
               <div>
                 <h5 class="card-title panel-title mb-0">Segnali &amp; Stato modem</h5>
-                <small class="text-muted">Dati raccolti via AT (ATI, AT^DEBUG?, AT^TEMP?) over SSH</small>
+                <small class="text-muted">Dati raccolti via AT (FOX: ATI/AT^DEBUG?/AT^TEMP? • Quectel: ATI/AT+QENG="servingcell"/AT+QTEMP)</small>
               </div>
               <div class="d-flex gap-2">
                 <button id="refresh-button" class="btn btn-outline-primary btn-sm">Aggiorna</button>
@@ -496,6 +516,9 @@ HTML_PAGE = """<!doctype html>
       const sendButton = document.getElementById('send-button');
       const disconnectButton = document.getElementById('disconnect-button');
       const connectButton = document.getElementById('connect-button');
+      const modemModeSwitch = document.getElementById('modem-mode-switch');
+      const modemModeInput = document.getElementById('modem-mode-input');
+      const modemModeLabel = document.getElementById('modem-mode-label');
       const connectionBadge = document.getElementById('connection-badge');
       const refreshButton = document.getElementById('refresh-button');
       const autoRefresh = document.getElementById('auto-refresh');
@@ -543,6 +566,7 @@ HTML_PAGE = """<!doctype html>
       let modemInfoLoaded = false;
       let lockState = { lte: { locked: false, pairs: [] }, nr: { locked: false, data: null }, locked: false };
       let lastSignals = null;
+      let currentModemMode = 'FOX';
       const bandTechnologies = [
         { key: 'WCDMA', label: 'WCDMA', hint: 'Bande 3G' },
         { key: 'LTE', label: 'LTE', hint: 'Bande 4G' },
@@ -556,6 +580,49 @@ HTML_PAGE = """<!doctype html>
         NR5G_SA: ['1', '2', '3', '5', '7', '8', '12', '20', '25', '28', '38', '40', '41', '48', '66', '71', '77', '78', '79'],
       };
 
+      function setModemMode(mode, persist = true) {
+        currentModemMode = (mode || 'FOX').toUpperCase() === 'QUECTEL' ? 'QUECTEL' : 'FOX';
+        modemModeInput.value = currentModemMode;
+        modemModeSwitch.checked = currentModemMode === 'QUECTEL';
+        modemModeLabel.textContent = currentModemMode === 'QUECTEL' ? 'Quectel' : 'FOX (T99W175)';
+        updateModeCapabilities();
+        if (persist) {
+          persistSettingsFromForm();
+        }
+      }
+
+      function updateModeCapabilities() {
+        const isQuectel = currentModemMode === 'QUECTEL';
+        const foxOnlyButtons = [
+          bandsRefreshButton,
+          bandsSaveButton,
+          bandsResetButton,
+          lockRefreshButton,
+          lockUnlockButton,
+          lockLteAddButton,
+          lockLteApplyButton,
+          lockLteRebootButton,
+          lockNrApplyButton,
+          lockNrRebootButton,
+        ];
+        if (isQuectel) {
+          foxOnlyButtons.forEach(button => {
+            if (button) {
+              button.disabled = true;
+            }
+          });
+          bandsContainer.innerHTML = `<div class="col-12"><div class="bg-white rounded border p-3 text-muted small">Gestione bande disponibile solo in modalità FOX.</div></div>`;
+          setBandsStatus('Gestione bande disponibile solo in modalità FOX.', 'warning');
+          lockLteContainer.innerHTML = '';
+          setLockStatus('Lock celle disponibile solo in modalità FOX.', 'warning');
+          toggleLockControls(false, false);
+          lockRefreshButton.disabled = true;
+        } else if (!sessionToken) {
+          resetBandsUI();
+          resetLockUI();
+        }
+      }
+
       function loadSavedSettings() {
         try {
           const raw = localStorage.getItem(STORAGE_KEY);
@@ -566,6 +633,11 @@ HTML_PAGE = """<!doctype html>
           if (saved.password) form.password.value = saved.password;
           if (saved.port) form.port.value = saved.port;
           if (saved.interface) form.interface.value = saved.interface;
+          if (saved.modem_mode) {
+            setModemMode(saved.modem_mode, false);
+          } else {
+            setModemMode(currentModemMode, false);
+          }
         } catch (error) {
           console.warn('Impossibile caricare le impostazioni salvate', error);
         }
@@ -579,6 +651,7 @@ HTML_PAGE = """<!doctype html>
             password: form.password.value,
             port: form.port.value,
             interface: form.interface.value.trim(),
+            modem_mode: modemModeInput.value,
           };
           localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
         } catch (error) {
@@ -594,10 +667,10 @@ HTML_PAGE = """<!doctype html>
         event.target.classList.add('active');
         const pane = document.querySelector(`.tab-pane[data-tab="${target}"]`);
         if (pane) pane.classList.add('active');
-        if (target === 'bande' && sessionToken && !Object.keys(currentBands).length) {
+        if (target === 'bande' && sessionToken && currentModemMode === 'FOX' && !Object.keys(currentBands).length) {
           loadBandPreferences(false);
         }
-        if (target === 'lock') {
+        if (target === 'lock' && currentModemMode === 'FOX') {
           loadLockStatus(true);
         }
         if (target === 'info') {
@@ -612,6 +685,9 @@ HTML_PAGE = """<!doctype html>
         if (!input) return;
         input.addEventListener('change', () => persistSettingsFromForm());
         input.addEventListener('blur', () => persistSettingsFromForm());
+      });
+      modemModeSwitch.addEventListener('change', () => {
+        setModemMode(modemModeSwitch.checked ? 'QUECTEL' : 'FOX');
       });
 
       const percentageCalculators = {
@@ -692,6 +768,7 @@ HTML_PAGE = """<!doctype html>
         connectionBadge.textContent = connected ? 'Connesso' : 'Disconnesso';
         connectionBadge.className = connected ? 'badge text-bg-success' : 'badge text-bg-secondary';
         connectButton.disabled = connected;
+        modemModeSwitch.disabled = connected;
       }
 
       function setInfoStatus(message, type = 'info') {
@@ -748,6 +825,7 @@ HTML_PAGE = """<!doctype html>
         if (event) event.preventDefault();
 
         log('Bottone Connetti cliccato');
+        setModemMode(modemModeInput.value, false);
         connectButton.disabled = true;
         showStatus('Connessione in corso...', 'info');
 
@@ -784,7 +862,9 @@ HTML_PAGE = """<!doctype html>
           autoRefresh.checked = true;
           enforceIntervalBounds();
           await fetchSignals();
-          await loadLockStatus(false);
+          if (currentModemMode === 'FOX') {
+            await loadLockStatus(false);
+          }
           syncAutoRefreshState();
         } catch (error) {
           log('ERRORE durante fetch: ' + error.message);
@@ -934,8 +1014,13 @@ HTML_PAGE = """<!doctype html>
 
       function resetBandsUI() {
         currentBands = {};
-        bandsContainer.innerHTML = `<div class="col-12"><div class="bg-white rounded border p-3 text-muted small">Connetti il modem e premi "Leggi bande" per ottenere l'elenco delle bande disponibili.</div></div>`;
-        setBandsStatus('In attesa di una connessione per leggere le bande.', 'info');
+        if (currentModemMode === 'QUECTEL') {
+          bandsContainer.innerHTML = `<div class="col-12"><div class="bg-white rounded border p-3 text-muted small">Gestione bande disponibile solo in modalità FOX.</div></div>`;
+          setBandsStatus('Gestione bande disponibile solo in modalità FOX.', 'warning');
+        } else {
+          bandsContainer.innerHTML = `<div class="col-12"><div class="bg-white rounded border p-3 text-muted small">Connetti il modem e premi "Leggi bande" per ottenere l'elenco delle bande disponibili.</div></div>`;
+          setBandsStatus('In attesa di una connessione per leggere le bande.', 'info');
+        }
         bandsRaw.textContent = '';
         bandsRaw.classList.add('d-none');
       }
@@ -966,14 +1051,24 @@ HTML_PAGE = """<!doctype html>
         lockState = { lte: { locked: false, pairs: [] }, nr: { locked: false, data: null }, locked: false };
         lastSignals = null;
         lockLteContainer.innerHTML = '';
-        addLteLockRow();
-        lockNrBand.value = '';
-        lockNrScs.value = '';
-        lockNrArfcn.value = '';
-        lockNrPci.value = '';
-        setLockStatus('In attesa di una connessione per leggere lo stato lock.', 'info');
-        lockRefreshButton.disabled = true;
-        toggleLockControls(false, false);
+        if (currentModemMode === 'QUECTEL') {
+          lockNrBand.value = '';
+          lockNrScs.value = '';
+          lockNrArfcn.value = '';
+          lockNrPci.value = '';
+          setLockStatus('Lock celle disponibile solo in modalità FOX.', 'warning');
+          lockRefreshButton.disabled = true;
+          toggleLockControls(false, false);
+        } else {
+          addLteLockRow();
+          lockNrBand.value = '';
+          lockNrScs.value = '';
+          lockNrArfcn.value = '';
+          lockNrPci.value = '';
+          setLockStatus('In attesa di una connessione per leggere lo stato lock.', 'info');
+          lockRefreshButton.disabled = true;
+          toggleLockControls(false, false);
+        }
       }
 
       function toggleLockControls(locked, connected = true) {
@@ -1776,8 +1871,8 @@ def _parse_temp_output(text: str) -> str:
     return f"Media {average:.1f}°C"
 
 
-def _parse_debug_output(text: str) -> Dict[str, Any]:
-    info: Dict[str, str] = {
+def _base_signal_info() -> Dict[str, Any]:
+    return {
         "rat": "-",
         "mccmnc": "-",
         "bands": "-",
@@ -1797,6 +1892,107 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
         "advanced": [],
     }
 
+
+def _round_value(value: Optional[float]) -> Optional[float]:
+    if value is None or value != value:
+        return None
+    return round(value, 1)
+
+
+def _build_advanced_detail(entry: Dict[str, Any]) -> Dict[str, Any]:
+    band_display = (
+        f"Band {entry.get('band')}"
+        if entry.get("technology") == "LTE" and entry.get("band")
+        else entry.get("band") or "N/A"
+    )
+    title = "Primary 4G" if entry.get("technology") == "LTE" else "Primary 5G"
+    if entry.get("technology") == "LTE" and entry.get("role") == "secondary":
+        title = f"CA 4G #{entry.get('ca_index', '')}".strip()
+    if band_display != "N/A":
+        title = f"{title} ({band_display})"
+
+    detail = {
+        "title": title,
+        "technology": entry.get("technology"),
+        "band": entry.get("band"),
+        "band_display": band_display,
+        "bandwidth": entry.get("bandwidth") or "-",
+        "channel": entry.get("channel") or "-",
+        "pci": entry.get("pci") or "-",
+        "rx_diversity": entry.get("rx_diversity") or "",
+        "tx_power": f"{_round_value(entry.get('tx_power'))} dBm" if entry.get("tx_power") is not None else "",
+        "metrics": [],
+        "antennas": entry.get("antennas") or [],
+    }
+
+    def add_metric(key: str, label: str, value: Optional[float], unit: str) -> None:
+        normalized = _round_value(value)
+        detail["metrics"].append(
+            {
+                "key": key,
+                "label": label,
+                "value": normalized,
+                "display": f"{normalized} {unit}" if normalized is not None else "N/A",
+            }
+        )
+
+    add_metric("rsrq", "RSRQ" if entry.get("technology") == "LTE" else "SS_RSRQ", entry.get("rsrq"), "dB")
+    add_metric("rsrp", "RSRP" if entry.get("technology") == "LTE" else "SS_RSRP", entry.get("rsrp"), "dBm")
+    add_metric("rssi", "RSSI", entry.get("rssi"), "dBm")
+    add_metric("snr", "SINR" if entry.get("technology") == "LTE" else "SS_SINR", entry.get("snr"), "dB")
+    return detail
+
+
+def _build_band_display(entries: list) -> str:
+    seen = set()
+    ordered_bands = []
+
+    for entry in entries:
+        band = entry.get("band")
+        technology = entry.get("technology")
+
+        if not band:
+            continue
+
+        normalized_band = str(band).strip()
+        if technology == "NR" and not normalized_band.lower().startswith("n"):
+            normalized_band = f"n{normalized_band}"
+
+        if normalized_band in seen:
+            continue
+
+        seen.add(normalized_band)
+        ordered_bands.append(normalized_band)
+
+    return " + ".join(ordered_bands) if ordered_bands else "-"
+
+
+def _build_channel_display(entries: list) -> str:
+    channels = []
+
+    for entry in entries:
+        channel = entry.get("channel")
+        if not channel:
+            continue
+
+        normalized_band = entry.get("band")
+        technology = entry.get("technology")
+
+        if technology == "NR" and normalized_band and not str(normalized_band).lower().startswith("n"):
+            normalized_band = f"n{normalized_band}"
+
+        label = str(channel).strip()
+        if normalized_band:
+            label = f"{label} ({normalized_band})"
+
+        channels.append(label)
+
+    return " + ".join(channels) if channels else "-"
+
+
+def _parse_debug_output(text: str) -> Dict[str, Any]:
+    info = _base_signal_info()
+
     def _to_float(value: str) -> Optional[float]:
         try:
             return float(value)
@@ -1808,11 +2004,6 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
         if not match:
             return None
         return _to_float(match.group(1))
-
-    def _round_value(value: Optional[float]) -> Optional[float]:
-        if value is None or value != value:
-            return None
-        return round(value, 1)
 
     def _parse_antennas(line: str, prefix: str = "Antenna"):
         match = re.search(r"\(([^)]+)\)", line)
@@ -1833,46 +2024,7 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
     def _finalize_entry(entry: Optional[Dict], advanced: list) -> None:
         if not entry:
             return
-
-        band_display = (
-            f"Band {entry['band']}" if entry.get("technology") == "LTE" and entry.get("band") else entry.get("band") or "N/A"
-        )
-        title = "Primary 4G" if entry.get("technology") == "LTE" else "Primary 5G"
-        if entry.get("technology") == "LTE" and entry.get("role") == "secondary":
-            title = f"CA 4G #{entry.get('ca_index', '')}".strip()
-        if band_display != "N/A":
-            title = f"{title} ({band_display})"
-
-        detail = {
-            "title": title,
-            "technology": entry.get("technology"),
-            "band": entry.get("band"),
-            "band_display": band_display,
-            "bandwidth": entry.get("bandwidth") or "-",
-            "channel": entry.get("channel") or "-",
-            "pci": entry.get("pci") or "-",
-            "rx_diversity": entry.get("rx_diversity") or "",
-            "tx_power": f"{_round_value(entry.get('tx_power'))} dBm" if entry.get("tx_power") is not None else "",
-            "metrics": [],
-            "antennas": entry.get("antennas") or [],
-        }
-
-        def add_metric(key: str, label: str, value: Optional[float], unit: str) -> None:
-            normalized = _round_value(value)
-            detail["metrics"].append(
-                {
-                    "key": key,
-                    "label": label,
-                    "value": normalized,
-                    "display": f"{normalized} {unit}" if normalized is not None else "N/A",
-                }
-            )
-
-        add_metric("rsrq", "RSRQ" if entry.get("technology") == "LTE" else "SS_RSRQ", entry.get("rsrq"), "dB")
-        add_metric("rsrp", "RSRP" if entry.get("technology") == "LTE" else "SS_RSRP", entry.get("rsrp"), "dBm")
-        add_metric("rssi", "RSSI", entry.get("rssi"), "dBm")
-        add_metric("snr", "SINR" if entry.get("technology") == "LTE" else "SS_SINR", entry.get("snr"), "dB")
-        advanced.append(detail)
+        advanced.append(_build_advanced_detail(entry))
 
     current_entry = None
     scell_counter = 0
@@ -2151,56 +2303,216 @@ def _parse_debug_output(text: str) -> Dict[str, Any]:
 
     _finalize_entry(current_entry, advanced_entries)
     info["advanced"] = advanced_entries
-
-    def _build_band_display(entries: list) -> str:
-        seen = set()
-        ordered_bands = []
-
-        for entry in entries:
-            band = entry.get("band")
-            technology = entry.get("technology")
-
-            if not band:
-                continue
-
-            normalized_band = str(band).strip()
-            if technology == "NR" and not normalized_band.lower().startswith("n"):
-                normalized_band = f"n{normalized_band}"
-
-            if normalized_band in seen:
-                continue
-
-            seen.add(normalized_band)
-            ordered_bands.append(normalized_band)
-
-        return " + ".join(ordered_bands) if ordered_bands else "-"
-
     info["bands"] = _build_band_display(advanced_entries)
-
-    def _build_channel_display(entries: list) -> str:
-        channels = []
-
-        for entry in entries:
-            channel = entry.get("channel")
-            if not channel:
-                continue
-
-            normalized_band = entry.get("band")
-            technology = entry.get("technology")
-
-            if technology == "NR" and normalized_band and not str(normalized_band).lower().startswith("n"):
-                normalized_band = f"n{normalized_band}"
-
-            label = str(channel).strip()
-            if normalized_band:
-                label = f"{label} ({normalized_band})"
-
-            channels.append(label)
-
-        return " + ".join(channels) if channels else "-"
-
     info["channels"] = _build_channel_display(advanced_entries)
 
+    return info
+
+
+def _parse_quectel_temp_output(text: str) -> str:
+    match = re.search(r"\+QADC:\s*([-\d]+),([-\d]+),([-\d]+)", text, re.IGNORECASE)
+    if not match:
+        return "-"
+    temps = [int(match.group(i)) for i in range(1, 4)]
+    average = sum(temps) / len(temps)
+    return f"Media {average:.1f}°C"
+
+
+def _parse_quectel_servingcell(text: str) -> Dict[str, Any]:
+    info = _base_signal_info()
+    advanced_entries = []
+
+    def _to_float(value: str) -> Optional[float]:
+        if not value or value == "-":
+            return None
+        try:
+            return float(value)
+        except Exception:
+            return None
+
+    def _strip(value: str) -> str:
+        return value.strip().strip('"')
+
+    def _maybe_hex_to_int(value: str) -> Optional[str]:
+        cleaned = _strip(value)
+        if not cleaned or cleaned == "-":
+            return None
+        if re.fullmatch(r"[0-9A-Fa-f]+", cleaned):
+            try:
+                return str(int(cleaned, 16))
+            except Exception:
+                return cleaned
+        return cleaned
+
+    def _set_info_metric(key: str, value: Optional[float], unit: str) -> None:
+        if value is None or info.get(key) != "-":
+            return
+        info[f"{key}_value"] = value
+        info[key] = f"{value}{unit}"
+
+    def _parse_csv_payload(payload: str) -> list:
+        try:
+            return next(csv.reader([payload], skipinitialspace=True))
+        except Exception:
+            return []
+
+    def _get_part(items: list, idx: int) -> str:
+        if idx >= len(items):
+            return ""
+        return items[idx]
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or not line.startswith("+QENG:"):
+            continue
+        payload = line.split(":", 1)[1].strip()
+        parts = [_strip(item) for item in _parse_csv_payload(payload)]
+        if not parts:
+            continue
+
+        if parts[0] == "servingcell":
+            if len(parts) >= 3 and parts[2] in {"LTE", "NR5G-SA"}:
+                parts = [parts[2]] + parts[3:]
+            else:
+                if len(parts) >= 3 and parts[2]:
+                    info["rat"] = parts[2]
+                continue
+
+        if parts[0] == "LTE":
+            if len(parts) < 15:
+                continue
+            info["rat"] = info["rat"] if info["rat"] != "-" else "LTE"
+            mcc = _get_part(parts, 2)
+            mnc = _get_part(parts, 3)
+            if mcc and mnc and info.get("mccmnc") == "-":
+                info["mccmnc"] = f"{mcc}/{mnc}"
+            cell_id = _maybe_hex_to_int(_get_part(parts, 4))
+            if cell_id and info.get("cell_id") == "-":
+                info["cell_id"] = cell_id
+            pci = _get_part(parts, 5)
+            if pci and info.get("pci") == "-":
+                info["pci"] = pci
+            channel = _get_part(parts, 6)
+            if channel and info.get("channel") == "-":
+                info["channel"] = channel
+            band = _get_part(parts, 7)
+            tac = _maybe_hex_to_int(_get_part(parts, 10))
+            if tac and info.get("tac") == "-":
+                info["tac"] = tac
+
+            rsrp = _to_float(_get_part(parts, 11))
+            rsrq = _to_float(_get_part(parts, 12))
+            rssi = _to_float(_get_part(parts, 13))
+            snr = _to_float(_get_part(parts, 14))
+            _set_info_metric("rsrp", rsrp, "dBm")
+            _set_info_metric("rsrq", rsrq, "dB")
+            _set_info_metric("rssi", rssi, "dBm")
+            _set_info_metric("snr", snr, "dB")
+
+            entry = {
+                "technology": "LTE",
+                "role": "primary",
+                "band": band or None,
+                "bandwidth": _get_part(parts, 9) or None,
+                "channel": channel or None,
+                "pci": pci or None,
+                "rsrp": rsrp,
+                "rsrq": rsrq,
+                "rssi": rssi,
+                "snr": snr,
+                "tx_power": _to_float(_get_part(parts, 16)) if len(parts) > 16 else None,
+                "antennas": [],
+            }
+            advanced_entries.append(_build_advanced_detail(entry))
+            continue
+
+        if parts[0] == "NR5G-NSA":
+            if len(parts) < 9:
+                continue
+            info["rat"] = "LTE+NR"
+            mcc = _get_part(parts, 1)
+            mnc = _get_part(parts, 2)
+            if mcc and mnc and info.get("mccmnc") == "-":
+                info["mccmnc"] = f"{mcc}/{mnc}"
+            pci = _get_part(parts, 3)
+            rsrp = _to_float(_get_part(parts, 4))
+            snr = _to_float(_get_part(parts, 5))
+            rsrq = _to_float(_get_part(parts, 6))
+            channel = _get_part(parts, 7)
+            band = _get_part(parts, 8)
+            bandwidth = _get_part(parts, 9) if len(parts) > 9 else None
+
+            if pci and info.get("pci") == "-":
+                info["pci"] = pci
+            if channel and info.get("channel") == "-":
+                info["channel"] = channel
+            _set_info_metric("rsrp", rsrp, "dBm")
+            _set_info_metric("rsrq", rsrq, "dB")
+            _set_info_metric("snr", snr, "dB")
+
+            entry = {
+                "technology": "NR",
+                "role": "primary",
+                "band": band or None,
+                "bandwidth": bandwidth or None,
+                "channel": channel or None,
+                "pci": pci or None,
+                "rsrp": rsrp,
+                "rsrq": rsrq,
+                "rssi": None,
+                "snr": snr,
+                "antennas": [],
+            }
+            advanced_entries.append(_build_advanced_detail(entry))
+            continue
+
+        if parts[0] == "NR5G-SA":
+            if len(parts) < 13:
+                continue
+            info["rat"] = "NR5G-SA"
+            mcc = _get_part(parts, 2)
+            mnc = _get_part(parts, 3)
+            if mcc and mnc and info.get("mccmnc") == "-":
+                info["mccmnc"] = f"{mcc}/{mnc}"
+            cell_id = _maybe_hex_to_int(_get_part(parts, 4))
+            if cell_id and info.get("cell_id") == "-":
+                info["cell_id"] = cell_id
+            pci = _get_part(parts, 5)
+            if pci and info.get("pci") == "-":
+                info["pci"] = pci
+            tac = _maybe_hex_to_int(_get_part(parts, 6))
+            if tac and info.get("tac") == "-":
+                info["tac"] = tac
+            channel = _get_part(parts, 7)
+            if channel and info.get("channel") == "-":
+                info["channel"] = channel
+            band = _get_part(parts, 8)
+            bandwidth = _get_part(parts, 9)
+            rsrp = _to_float(_get_part(parts, 10))
+            rsrq = _to_float(_get_part(parts, 11))
+            snr = _to_float(_get_part(parts, 12))
+            _set_info_metric("rsrp", rsrp, "dBm")
+            _set_info_metric("rsrq", rsrq, "dB")
+            _set_info_metric("snr", snr, "dB")
+
+            entry = {
+                "technology": "NR",
+                "role": "primary",
+                "band": band or None,
+                "bandwidth": bandwidth or None,
+                "channel": channel or None,
+                "pci": pci or None,
+                "rsrp": rsrp,
+                "rsrq": rsrq,
+                "rssi": None,
+                "snr": snr,
+                "antennas": [],
+            }
+            advanced_entries.append(_build_advanced_detail(entry))
+
+    info["advanced"] = advanced_entries
+    info["bands"] = _build_band_display(advanced_entries)
+    info["channels"] = _build_channel_display(advanced_entries)
     return info
 
 
@@ -2264,6 +2576,9 @@ def connect():
     password = data["password"]
     interface = data["interface"].strip()
     port = int(data.get("port", 22))
+    modem_mode = (data.get("modem_mode") or "FOX").strip().upper()
+    if modem_mode not in {"FOX", "QUECTEL"}:
+        return jsonify({"error": "Modalità modem non valida"}), 400
 
     logger.info(
         "Tentativo connessione: host=%s port=%s user=%s interface=%s password=%s",
@@ -2302,9 +2617,9 @@ def connect():
         logger.exception("Test at-chat fallito")
         return jsonify({"error": f"Test at-chat fallito: {str(exc)}"}), 500
 
-    session = sessions.add(client, interface, host, username, port)
+    session = sessions.add(client, interface, host, username, port, modem_mode)
     sessions.cleanup()
-    return jsonify({"token": session.token, "preview": preview})
+    return jsonify({"token": session.token, "preview": preview, "modem_mode": session.modem_mode})
 
 
 @app.route("/send", methods=["POST"])
@@ -2383,24 +2698,41 @@ def signals():
 
     try:
         ati_text = _run_at_command(session, "ATI", timeout=15)
-        debug_text = _run_at_command(session, "AT^DEBUG?", timeout=25)
-        temp_text = _run_at_command(session, "AT^TEMP?", timeout=15)
+        if session.modem_mode == "QUECTEL":
+            serving_text = _run_at_command(session, 'AT+QENG="servingcell"', timeout=25)
+            temp_text = _run_at_command(session, "AT+QTEMP", timeout=15)
+        else:
+            serving_text = _run_at_command(session, "AT^DEBUG?", timeout=25)
+            temp_text = _run_at_command(session, "AT^TEMP?", timeout=15)
     except Exception as exc:
         logger.exception("Errore durante raccolta segnali")
         return jsonify({"error": f"Comandi AT falliti: {str(exc)}"}), 502
 
-    info = _parse_debug_output(debug_text)
+    if session.modem_mode == "QUECTEL":
+        info = _parse_quectel_servingcell(serving_text)
+    else:
+        info = _parse_debug_output(serving_text)
     ati = _parse_ati_output(ati_text)
 
     info["operator"] = ati.get("manufacturer", "") + (" " + ati.get("model", "") if ati.get("model") else "")
-    info["temperature"] = _parse_temp_output(temp_text)
+    if session.modem_mode == "QUECTEL":
+        info["temperature"] = _parse_quectel_temp_output(temp_text)
+    else:
+        info["temperature"] = _parse_temp_output(temp_text)
     info["signal_assessment"] = _assess_signal(info.get("rsrp", "-"), info.get("rsrq", "-"), info.get("snr", "-"))
 
-    raw = "\n\n".join([
-        "ATI\n" + ati_text,
-        "AT^DEBUG?\n" + debug_text,
-        "AT^TEMP?\n" + temp_text,
-    ])
+    if session.modem_mode == "QUECTEL":
+        raw = "\n\n".join([
+            "ATI\n" + ati_text,
+            'AT+QENG="servingcell"\n' + serving_text,
+            "AT+QTEMP\n" + temp_text,
+        ])
+    else:
+        raw = "\n\n".join([
+            "ATI\n" + ati_text,
+            "AT^DEBUG?\n" + serving_text,
+            "AT^TEMP?\n" + temp_text,
+        ])
 
     return jsonify({"parsed": info, "raw": raw})
 

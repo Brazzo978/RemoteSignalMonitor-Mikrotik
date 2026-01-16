@@ -2516,91 +2516,6 @@ def _parse_quectel_servingcell(text: str) -> Dict[str, Any]:
     return info
 
 
-def _parse_quectel_qcainfo(text: str) -> Dict[str, Any]:
-    info = _base_signal_info()
-    entries = []
-
-    def _to_float(value: str) -> Optional[float]:
-        if not value or value == "-":
-            return None
-        try:
-            return float(value)
-        except Exception:
-            return None
-
-    def _strip(value: str) -> str:
-        return value.strip().strip('"')
-
-    def _parse_int(value: str) -> Optional[str]:
-        cleaned = _strip(value)
-        if not cleaned:
-            return None
-        if re.fullmatch(r"-?\d+", cleaned):
-            return cleaned
-        return None
-
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or not line.startswith("+QCAINFO:"):
-            continue
-        payload = line.split(":", 1)[1].strip()
-        try:
-            parts = next(csv.reader([payload], skipinitialspace=True))
-        except Exception:
-            continue
-
-        if len(parts) < 4:
-            continue
-
-        role_raw = _strip(parts[0]).upper()
-        role = "primary" if role_raw == "PCC" else "secondary"
-        channel = _parse_int(parts[1])
-        bandwidth = _parse_int(parts[2])
-        band_label = _strip(parts[3])
-        band_match = re.search(r"(\d+)", band_label)
-        band = band_match.group(1) if band_match else band_label or None
-        pci = _parse_int(parts[5]) if len(parts) > 5 else None
-        rsrp = _to_float(parts[6]) if len(parts) > 6 else None
-        rsrq = _to_float(parts[7]) if len(parts) > 7 else None
-        snr = _to_float(parts[8]) if len(parts) > 8 else None
-
-        entry = {
-            "technology": "LTE",
-            "role": role,
-            "band": band,
-            "bandwidth": bandwidth,
-            "channel": channel,
-            "pci": pci,
-            "rsrp": rsrp,
-            "rsrq": rsrq,
-            "rssi": None,
-            "snr": snr,
-            "antennas": [],
-        }
-        entries.append(_build_advanced_detail(entry))
-
-        if role == "primary":
-            info["rat"] = "LTE"
-            if channel and info.get("channel") == "-":
-                info["channel"] = channel
-            if pci and info.get("pci") == "-":
-                info["pci"] = pci
-            if rsrp is not None and info.get("rsrp") == "-":
-                info["rsrp_value"] = rsrp
-                info["rsrp"] = f"{rsrp}dBm"
-            if rsrq is not None and info.get("rsrq") == "-":
-                info["rsrq_value"] = rsrq
-                info["rsrq"] = f"{rsrq}dB"
-            if snr is not None and info.get("snr") == "-":
-                info["snr_value"] = snr
-                info["snr"] = f"{snr}dB"
-
-    info["advanced"] = entries
-    info["bands"] = _build_band_display(entries)
-    info["channels"] = _build_channel_display(entries)
-    return info
-
-
 def _assess_signal(rsrp: str, rsrq: str, snr: str) -> str:
     try:
         rsrp_val = float(rsrp.replace("dBm", "")) if rsrp.endswith("dBm") else None
@@ -2784,7 +2699,7 @@ def signals():
     try:
         ati_text = _run_at_command(session, "ATI", timeout=15)
         if session.modem_mode == "QUECTEL":
-            qcainfo_text = _run_at_command(session, "AT+QCAINFO", timeout=25)
+            serving_text = _run_at_command(session, 'AT+QENG="servingcell"', timeout=25)
             temp_text = _run_at_command(session, "AT+QTEMP", timeout=15)
         else:
             serving_text = _run_at_command(session, "AT^DEBUG?", timeout=25)
@@ -2794,7 +2709,7 @@ def signals():
         return jsonify({"error": f"Comandi AT falliti: {str(exc)}"}), 502
 
     if session.modem_mode == "QUECTEL":
-        info = _parse_quectel_qcainfo(qcainfo_text)
+        info = _parse_quectel_servingcell(serving_text)
     else:
         info = _parse_debug_output(serving_text)
     ati = _parse_ati_output(ati_text)
@@ -2809,7 +2724,7 @@ def signals():
     if session.modem_mode == "QUECTEL":
         raw = "\n\n".join([
             "ATI\n" + ati_text,
-            "AT+QCAINFO\n" + qcainfo_text,
+            'AT+QENG="servingcell"\n' + serving_text,
             "AT+QTEMP\n" + temp_text,
         ])
     else:

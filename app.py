@@ -2516,75 +2516,6 @@ def _parse_quectel_servingcell(text: str) -> Dict[str, Any]:
     return info
 
 
-def _parse_quectel_qcainfo(text: str) -> Dict[str, Any]:
-    entries = []
-
-    def _to_float(value: str) -> Optional[float]:
-        if not value or value == "-":
-            return None
-        try:
-            return float(value)
-        except Exception:
-            return None
-
-    def _strip(value: str) -> str:
-        return value.strip().strip('"')
-
-    def _parse_int(value: str) -> Optional[str]:
-        cleaned = _strip(value)
-        if not cleaned:
-            return None
-        if re.fullmatch(r"-?\d+", cleaned):
-            return cleaned
-        return None
-
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line or not line.startswith("+QCAINFO:"):
-            continue
-        payload = line.split(":", 1)[1].strip()
-        try:
-            parts = next(csv.reader([payload], skipinitialspace=True))
-        except Exception:
-            continue
-
-        if len(parts) < 4:
-            continue
-
-        role_raw = _strip(parts[0]).upper()
-        role = "primary" if role_raw == "PCC" else "secondary"
-        channel = _parse_int(parts[1])
-        bandwidth = _parse_int(parts[2])
-        band_label = _strip(parts[3])
-        band_match = re.search(r"(\d+)", band_label)
-        band = band_match.group(1) if band_match else band_label or None
-        pci = _parse_int(parts[5]) if len(parts) > 5 else None
-        rsrp = _to_float(parts[6]) if len(parts) > 6 else None
-        rsrq = _to_float(parts[7]) if len(parts) > 7 else None
-        snr = _to_float(parts[8]) if len(parts) > 8 else None
-
-        entry = {
-            "technology": "LTE",
-            "role": role,
-            "band": band,
-            "bandwidth": bandwidth,
-            "channel": channel,
-            "pci": pci,
-            "rsrp": rsrp,
-            "rsrq": rsrq,
-            "rssi": None,
-            "snr": snr,
-            "antennas": [],
-        }
-        entries.append(_build_advanced_detail(entry))
-
-    return {
-        "entries": entries,
-        "bands": _build_band_display(entries),
-        "channels": _build_channel_display(entries),
-    }
-
-
 def _assess_signal(rsrp: str, rsrq: str, snr: str) -> str:
     try:
         rsrp_val = float(rsrp.replace("dBm", "")) if rsrp.endswith("dBm") else None
@@ -2769,7 +2700,6 @@ def signals():
         ati_text = _run_at_command(session, "ATI", timeout=15)
         if session.modem_mode == "QUECTEL":
             serving_text = _run_at_command(session, 'AT+QENG="servingcell"', timeout=25)
-            qcainfo_text = _run_at_command(session, "AT+QCAINFO", timeout=25)
             temp_text = _run_at_command(session, "AT+QTEMP", timeout=15)
         else:
             serving_text = _run_at_command(session, "AT^DEBUG?", timeout=25)
@@ -2780,18 +2710,6 @@ def signals():
 
     if session.modem_mode == "QUECTEL":
         info = _parse_quectel_servingcell(serving_text)
-        qcainfo = _parse_quectel_qcainfo(qcainfo_text)
-        if qcainfo["entries"]:
-            info["advanced"] = qcainfo["entries"]
-            if qcainfo["bands"] != "-":
-                info["bands"] = qcainfo["bands"]
-            if qcainfo["channels"] != "-":
-                info["channels"] = qcainfo["channels"]
-            primary = qcainfo["entries"][0]
-            if info.get("channel") == "-" and primary.get("channel") not in {None, "-"}:
-                info["channel"] = primary["channel"]
-            if info.get("pci") == "-" and primary.get("pci") not in {None, "-"}:
-                info["pci"] = primary["pci"]
     else:
         info = _parse_debug_output(serving_text)
     ati = _parse_ati_output(ati_text)
@@ -2807,7 +2725,6 @@ def signals():
         raw = "\n\n".join([
             "ATI\n" + ati_text,
             'AT+QENG="servingcell"\n' + serving_text,
-            "AT+QCAINFO\n" + qcainfo_text,
             "AT+QTEMP\n" + temp_text,
         ])
     else:

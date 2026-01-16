@@ -2562,7 +2562,8 @@ def _parse_quectel_qcainfo(text: str) -> Dict[str, Any]:
         pci = _parse_int(parts[5]) if len(parts) > 5 else None
         rsrp = _to_float(parts[6]) if len(parts) > 6 else None
         rsrq = _to_float(parts[7]) if len(parts) > 7 else None
-        snr = _to_float(parts[8]) if len(parts) > 8 else None
+        rssi = _to_float(parts[8]) if len(parts) > 8 else None
+        snr = _to_float(parts[9]) if len(parts) > 9 else _to_float(parts[8]) if len(parts) > 8 else None
 
         entry = {
             "technology": "LTE",
@@ -2573,7 +2574,7 @@ def _parse_quectel_qcainfo(text: str) -> Dict[str, Any]:
             "pci": pci,
             "rsrp": rsrp,
             "rsrq": rsrq,
-            "rssi": None,
+            "rssi": rssi,
             "snr": snr,
             "antennas": [],
         }
@@ -2591,6 +2592,9 @@ def _parse_quectel_qcainfo(text: str) -> Dict[str, Any]:
             if rsrq is not None and info.get("rsrq") == "-":
                 info["rsrq_value"] = rsrq
                 info["rsrq"] = f"{rsrq}dB"
+            if rssi is not None and info.get("rssi") == "-":
+                info["rssi_value"] = rssi
+                info["rssi"] = f"{rssi}dBm"
             if snr is not None and info.get("snr") == "-":
                 info["snr_value"] = snr
                 info["snr"] = f"{snr}dB"
